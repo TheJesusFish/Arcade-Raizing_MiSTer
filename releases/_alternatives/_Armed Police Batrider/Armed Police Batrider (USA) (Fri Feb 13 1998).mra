@@ -1,8 +1,7 @@
 <misterromdescription>
-    <about author="pram0d" webpage="https://pram0d.com" source="https://github.com/psomashekar" twitter="@pr4m0d"/>
     <name>Armed Police Batrider (USA) (Fri Feb 13 1998)</name>
     <setname>batrideru</setname>
-    <rbf>batrider</rbf>
+    <rbf>Raizing</rbf>
     <mameversion>0245</mameversion>
     <year>1998</year>
     <manufacturer>Raizing / Eighting</manufacturer>
@@ -13,8 +12,9 @@
     <platform>Toaplan 2</platform>
     <category>Shoot'em up</category>
     <catver>Shooter / Flying Vertical</catver>
-    <mraauthor>pram0d, atrac17</mraauthor>
     <rom index="0" zip="batrideru.zip|batrider.zip" md5="None" address="0x30000000">
+        <!-- mapper for game 03 - batrider -->
+        <part>03</part>
         <!-- maincpu - starts at 0x0 -->
         <interleave output="16">
             <part name="prg0_usa.u22" crc="2049d007" map="01"/>
@@ -43,7 +43,7 @@
     </rom>
     <!-- Vertical game -->
     <rom index="1">
-        <part>01</part>
+        <part>05 80</part>
     </rom>
     <!-- default high score table -->
     <rom index="2">

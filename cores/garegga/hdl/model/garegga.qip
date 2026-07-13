@@ -1,9 +1,0 @@
-
-#top level mainboard
-set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) garegga_game.v]
-set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) garegga_cpu.v]
-set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) garegga_clock.v]
-set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) garegga_sdram.v]
-set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) garegga_sound.v]
-set_global_assignment -name QIP_FILE     modules/raizing_video/raizing_video_single_bank.qip
-set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) components/NMK112.v]

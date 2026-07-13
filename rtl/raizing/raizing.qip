@@ -1,0 +1,37 @@
+
+# Shared Raizing board wrapper.
+# raizing_game selects the MRA target byte and raizing_board muxes common 68K/bus hardware
+# across Garegga-family, Batrider, and Bakraid board devices.
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_game.v]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_board.v]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_main_cpu.v]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_resync.v]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_rom_4slots_rr.v]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_dual_ram.v]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_dual_ram16.v]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_obj_buffer.v]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_t80.v]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_gp9001_vint.v]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_68kdtack.v]
+
+set_global_assignment -name VERILOG_FILE rtl/batrider/batrider_clock.v
+set_global_assignment -name VERILOG_FILE rtl/batrider/batrider_sdram.v
+set_global_assignment -name VERILOG_FILE rtl/batrider/batrider_sound.v
+set_global_assignment -name QIP_FILE     rtl/modules/raizing_video/raizing_video_double_bank.qip
+set_global_assignment -name VERILOG_FILE rtl/batrider/components/TVRMCTL7.v
+set_global_assignment -name VERILOG_FILE rtl/batrider/components/NMK112.v
+set_global_assignment -name VERILOG_FILE rtl/batrider/components/RA9704_audio_filter.v
+
+set_global_assignment -name VERILOG_FILE rtl/garegga/garegga_clock.v
+set_global_assignment -name VERILOG_FILE rtl/garegga/garegga_sdram.v
+set_global_assignment -name VERILOG_FILE rtl/garegga/garegga_sound.v
+set_global_assignment -name VERILOG_FILE rtl/modules/raizing_video/single_named/raizing_video_single.v
+set_global_assignment -name VERILOG_FILE rtl/modules/raizing_video/single_named/raizing_gcu_single.v
+set_global_assignment -name VERILOG_FILE rtl/modules/raizing_video/single_named/AFBK_CT2_single.v
+
+set_global_assignment -name VERILOG_FILE rtl/bakraid/bakraid_clock.v
+set_global_assignment -name VERILOG_FILE rtl/bakraid/bakraid_sdram.v
+set_global_assignment -name VERILOG_FILE rtl/bakraid/bakraid_sound.v
+set_global_assignment -name VERILOG_FILE rtl/modules/jteeprom/hdl/jt9346.v
+set_global_assignment -name VERILOG_FILE rtl/modules/jteeprom/hdl/jt9346_16b8b.v
+set_global_assignment -name VERILOG_FILE rtl/bakraid/components/YMZ280B.v

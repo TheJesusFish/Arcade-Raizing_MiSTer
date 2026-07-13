@@ -1,0 +1,10 @@
+set_global_assignment -name QIP_FILE rtl/jtframe.qip
+set_global_assignment -name QIP_FILE rtl/modules/t80/T80.qip
+set_global_assignment -name QIP_FILE rtl/raizing/raizing.qip
+set_global_assignment -name QIP_FILE rtl/game.qip
+set_global_assignment -name SYSTEMVERILOG_FILE Arcade-Raizing.sv
+set_global_assignment -name SDC_FILE Arcade-Raizing.sdc
+
+# Resolve bare upstream init filenames without copying them into the project root.
+set_global_assignment -name SEARCH_PATH rtl/modules/jt6295/hdl
+set_global_assignment -name SEARCH_PATH rtl/modules/fx68k/hdl

@@ -1,5 +1,66 @@
-incremental_db
-output_files
-db
-jtag.cdf
+# OS/editor files
+.DS_Store
+*~
+*.bak
+*.orig
+*.rej
+
+# Local development and simulation workspaces
+/sim/
+/tools/
+/cfg/
+/snap/
+/*_sim/
+/simulation/
+/scaler/
+/vip/
+/hc_output/
+/hps_isw_handoff/
+/.qsys_edit/
+
+# Quartus build products
+/db/
+/greybox_tmp/
+/incremental_db/
+/output_files/
+/build_id.v
+/c5_pin_model_dump.txt
+/PLLJ_PLLSPE_INFO.txt
+*.qdf
+*.rpt
+*.smsg
+*.summary
+*.done
+*.jdi
+*.pin
+*.sof
+*.rbf
+*.sld
 *.qws
+*.ddb
+*.sopcinfo
+*.cdf
+
+# Generated IP metadata. Existing tracked PLL files remain tracked.
+*.ppf
+*.cmp
+*.sip
+*.spd
+*.bsf
+
+# ModelSim/Questa output
+/transcript
+/modelsim.ini
+/vsim.wlf
+*.wlf
+*.vcd
+*.fst
+
+# Local timing/profiling reports and one-off analysis scripts
+/cap_*.txt
+/f_*.txt
+/v_*.txt
+/failing_paths.txt
+/cr_ie_info.json
+/sta_*.tcl
+/*.csv

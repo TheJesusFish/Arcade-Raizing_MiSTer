@@ -1,9 +1,0 @@
-*.log
-sim
-*.lxt
-*.bin
-*.o
-*.hex
-history
-a.out
-*.sim
