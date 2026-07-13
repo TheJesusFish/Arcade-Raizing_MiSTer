@@ -1,17 +1,18 @@
 # Arcade-Raizing MiSTer Core
 
-This work-in-progress project consolidates the Raizing MiSTer cores into one
-multi-game core.
+This is a Codex-assisted update and refactoring of the Raizing FPGA core by Pramod Somashekar.
+
+The codebase is largely still Pramod's, but updated to run on modern MiSTer hardware, and consolidated into a single core.
 
 ## Supported Games
 
 | Title                                                                                                                 | Status        |
 |-----------------------------------------------------------------------------------------------------------------------|---------------|
-| [**Sorcer Striker**](https://en.wikipedia.org/wiki/Sorcer_Striker)                                                    | Wired, needs hardware test |
-| [**Kingdom Grandprix**](https://en.wikipedia.org/wiki/Kingdom_Grand_Prix)                                             | Wired, needs hardware test |
-| [**Battle Garegga**](https://en.wikipedia.org/wiki/Battle_Garegga)                                                    | Boots         |
-| [**Batrider**](https://en.wikipedia.org/wiki/Armed_Police_Batrider)                                                   | Boots         |
-| [**Battle Bakraid**](https://en.wikipedia.org/wiki/Battle_Bakraid)                                                    | Shared battle path, needs build/hardware test |
+| [**Sorcer Striker**](https://en.wikipedia.org/wiki/Sorcer_Striker)                                                    | Public        |
+| [**Kingdom Grandprix**](https://en.wikipedia.org/wiki/Kingdom_Grand_Prix)                                             | PPublic       |
+| [**Battle Garegga**](https://en.wikipedia.org/wiki/Battle_Garegga)                                                    | Public        |
+| [**Batrider**](https://en.wikipedia.org/wiki/Armed_Police_Batrider)                                                   | Public        |
+| [**Battle Bakraid**](https://en.wikipedia.org/wiki/Battle_Bakraid)                                                    | Public        |
 
 ## Development
 
