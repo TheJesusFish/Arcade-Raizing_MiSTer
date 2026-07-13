@@ -12,11 +12,16 @@
 /snap/
 /*_sim/
 /simulation/
+/rtl/raizingpll_sim/
+/rtl/raizingpll_sim.f
 /scaler/
 /vip/
 /hc_output/
 /hps_isw_handoff/
 /.qsys_edit/
+
+# Local automation credentials and helpers
+/.codex_ssh_askpass.cmd
 
 # Quartus build products
 /db/
