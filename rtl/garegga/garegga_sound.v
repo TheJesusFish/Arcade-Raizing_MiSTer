@@ -22,7 +22,9 @@
 * You should have received a copy of the GNU General Public License
 * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-module garegga_sound (
+module garegga_sound #(
+    parameter EXTERNAL_CHIPS = 0
+)(
     input                CLK,
     input                CLK96,
     input                RESET,
@@ -62,7 +64,30 @@ module garegga_sound (
     input          [7:0] GAME,
     input          [1:0] FX_LEVEL,
     input          [5:0] SND_EN,
-    input		 DIP_PAUSE
+	input		 DIP_PAUSE,
+
+    output               FM_CEN_OUT,
+    output               FM_CEN_P1_OUT,
+    output               FM_CS_N_OUT,
+    output               FM_WR_N_OUT,
+    output               FM_A0_OUT,
+    output         [7:0] FM_DIN_OUT,
+    input          [7:0] FM_DOUT_IN,
+    input                FM_IRQ_N_IN,
+    input                FM_SAMPLE_IN,
+    input signed  [15:0] FM_XLEFT_IN,
+    input signed  [15:0] FM_XRIGHT_IN,
+
+    output               OKI0_CEN_OUT,
+    output               OKI0_SS_OUT,
+    output               OKI0_WR_N_OUT,
+    output         [7:0] OKI0_DIN_OUT,
+    input          [7:0] OKI0_DOUT_IN,
+    input         [17:0] OKI0_ROM_ADDR_IN,
+    output         [7:0] OKI0_ROM_DATA_OUT,
+    output               OKI0_ROM_OK_OUT,
+    input signed  [13:0] OKI0_SOUND_IN,
+    input                OKI0_SAMPLE_IN
 );
 
 localparam GAREGGA = 'h0, KINGDMGP = 'h2, SSTRIKER = 'h1;
@@ -78,6 +103,7 @@ wire wr_n;
 wire [15:0] A;
 reg [7:0] din, oki0_din, oki1_din;
 reg [3:0] bank = 2; // init bank to 2
+reg ram_cs, fm_cs;
 wire [7:0] dout, fm0_dout, oki0_dout, fm1_dout, oki1_dout;
 wire signed [15:0] fm0_left, fm0_right, fm1_left, fm1_right;
 wire signed [16:0] fm0_mono_sum, fm1_mono_sum;
@@ -95,6 +121,20 @@ reg nmk112_we_q;
 reg okim6295_device_0_wr_q;
 wire [17:0] oki0_pcm_addr, oki1_pcm_addr;
 wire [20:0] nmk_pcm_addr;
+
+assign FM_CEN_OUT = (is_sorcer_kingdom ? YM2151_CEN_1 : YM2151_CEN) & DIP_PAUSE;
+assign FM_CEN_P1_OUT = (is_sorcer_kingdom ? YM2151_CEN2_1 : YM2151_CEN2) & DIP_PAUSE;
+assign FM_CS_N_OUT = !fm_cs;
+assign FM_WR_N_OUT = wr_n;
+assign FM_A0_OUT = A[0];
+assign FM_DIN_OUT = dout;
+
+assign OKI0_CEN_OUT = (is_sorcer_kingdom ? OKI_CEN_1 : OKI_CEN) & DIP_PAUSE;
+assign OKI0_SS_OUT = 1'b1;
+assign OKI0_WR_N_OUT = ~okim6295_device_0_wr_q;
+assign OKI0_DIN_OUT = is_sorcer_kingdom ? oki1_din : oki0_din;
+assign OKI0_ROM_DATA_OUT = PCM_DOUT;
+assign OKI0_ROM_OK_OUT = PCM_OK;
 
 //debugging
 `ifdef SIMULATION
@@ -178,7 +218,6 @@ wire okim6295_device_0_wr_dec = snd_wr_qual && A == 16'hE004;
 wire raizing_oki_bankswitch_w_dec = snd_wr_qual && (A == 16'hE006 || A == 16'hE008);
 
 //address bus
-reg ram_cs, fm_cs;
 always @(posedge CLK96) begin
     if(audio_cpu_reset) begin
         soundlatch_rd <= 0;
@@ -366,6 +405,8 @@ assign PCM_CS = 1'b1;
 // Use the softer/brighter JT6295 4x interpolator that fixed the low-brightness
 // OKI character in Batrider/Cave while leaving the drop-in module untouched.
 //for garegga
+generate
+if(!EXTERNAL_CHIPS) begin : gen_internal_chips
 jt6295 #(.INTERPOL(2)) u_adpcm_0(
     .rst        ( RESET96       ),
     .clk        ( CLK96       ),
@@ -446,5 +487,25 @@ jt6295 #(.INTERPOL(2)) u_adpcm_1(
     .sound      ( oki1_pre   ),
     .sample     ( oki1_sample)   // ~26kHz
 );
+end else begin : gen_external_chips
+    assign fm0_dout = FM_DOUT_IN;
+    assign fm1_dout = FM_DOUT_IN;
+    assign ym_irq_n = FM_IRQ_N_IN;
+    assign sample_0 = FM_SAMPLE_IN;
+    assign sample_1 = FM_SAMPLE_IN;
+    assign fm0_left = FM_XLEFT_IN;
+    assign fm0_right = FM_XRIGHT_IN;
+    assign fm1_left = FM_XLEFT_IN;
+    assign fm1_right = FM_XRIGHT_IN;
+    assign oki0_dout = OKI0_DOUT_IN;
+    assign oki1_dout = OKI0_DOUT_IN;
+    assign oki0_pcm_addr = OKI0_ROM_ADDR_IN;
+    assign oki1_pcm_addr = OKI0_ROM_ADDR_IN;
+    assign oki0_pre = OKI0_SOUND_IN;
+    assign oki1_pre = OKI0_SOUND_IN;
+    assign oki0_sample = OKI0_SAMPLE_IN;
+    assign oki1_sample = OKI0_SAMPLE_IN;
+end
+endgenerate
 
 endmodule

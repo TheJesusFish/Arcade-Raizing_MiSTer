@@ -662,7 +662,28 @@ wire k_PCM_CS, k_PCM_OK, k_PCM1_CS, k_PCM1_OK, k_PCM2_CS, k_PCM2_OK;
 wire [21:0] k_PCM_ADDR, k_PCM1_ADDR, k_PCM2_ADDR;
 wire [7:0] k_PCM_DOUT, k_PCM1_DOUT, k_PCM2_DOUT;
 
-garegga_sound u_garegga_sound(
+wire g_fm_cen_out, g_fm_cen_p1_out, g_fm_cs_n_out, g_fm_wr_n_out, g_fm_a0_out;
+wire [7:0] g_fm_din_out;
+wire g_oki0_cen_out, g_oki0_ss_out, g_oki0_wr_n_out;
+wire [7:0] g_oki0_din_out, g_oki0_rom_data_out;
+wire g_oki0_rom_ok_out;
+
+wire b_fm_cen_out, b_fm_cen_p1_out, b_fm_cs_n_out, b_fm_wr_n_out, b_fm_a0_out;
+wire [7:0] b_fm_din_out;
+wire b_oki0_cen_out, b_oki0_ss_out, b_oki0_wr_n_out;
+wire [7:0] b_oki0_din_out, b_oki0_rom_data_out;
+wire b_oki0_rom_ok_out;
+wire b_oki1_cen_out, b_oki1_ss_out, b_oki1_wr_n_out;
+wire [7:0] b_oki1_din_out, b_oki1_rom_data_out;
+wire b_oki1_rom_ok_out;
+
+wire [7:0] jt_fm_dout, jt_oki0_dout, jt_oki1_dout;
+wire jt_fm_irq_n, jt_fm_sample, jt_oki0_sample, jt_oki1_sample;
+wire signed [15:0] jt_fm_xleft, jt_fm_xright;
+wire signed [13:0] jt_oki0_sound, jt_oki1_sound;
+wire [17:0] jt_oki0_rom_addr, jt_oki1_rom_addr;
+
+garegga_sound #(.EXTERNAL_CHIPS(1)) u_garegga_sound(
     .CLK(CLK),
     .CLK96(CLK96),
     .RESET(RESET | !active_is_garegga),
@@ -698,10 +719,31 @@ garegga_sound u_garegga_sound(
     .GAME(GAME_ID),
     .FX_LEVEL(dip_fxlevel),
     .SND_EN(g_sound_en),
-    .DIP_PAUSE(DIP_PAUSE)
+    .DIP_PAUSE(DIP_PAUSE),
+    .FM_CEN_OUT(g_fm_cen_out),
+    .FM_CEN_P1_OUT(g_fm_cen_p1_out),
+    .FM_CS_N_OUT(g_fm_cs_n_out),
+    .FM_WR_N_OUT(g_fm_wr_n_out),
+    .FM_A0_OUT(g_fm_a0_out),
+    .FM_DIN_OUT(g_fm_din_out),
+    .FM_DOUT_IN(jt_fm_dout),
+    .FM_IRQ_N_IN(jt_fm_irq_n),
+    .FM_SAMPLE_IN(jt_fm_sample),
+    .FM_XLEFT_IN(jt_fm_xleft),
+    .FM_XRIGHT_IN(jt_fm_xright),
+    .OKI0_CEN_OUT(g_oki0_cen_out),
+    .OKI0_SS_OUT(g_oki0_ss_out),
+    .OKI0_WR_N_OUT(g_oki0_wr_n_out),
+    .OKI0_DIN_OUT(g_oki0_din_out),
+    .OKI0_DOUT_IN(jt_oki0_dout),
+    .OKI0_ROM_ADDR_IN(jt_oki0_rom_addr),
+    .OKI0_ROM_DATA_OUT(g_oki0_rom_data_out),
+    .OKI0_ROM_OK_OUT(g_oki0_rom_ok_out),
+    .OKI0_SOUND_IN(jt_oki0_sound),
+    .OKI0_SAMPLE_IN(jt_oki0_sample)
 );
 
-batrider_sound u_batrider_sound(
+batrider_sound #(.EXTERNAL_CHIPS(1)) u_batrider_sound(
     .CLK(CLK),
     .CLK96(CLK96),
     .RESET(RESET | !active_is_batrider),
@@ -736,7 +778,75 @@ batrider_sound u_batrider_sound(
     .sample(b_sample),
     .peak(b_snd_peak),
     .FX_LEVEL(dip_fxlevel),
-    .DIP_PAUSE(DIP_PAUSE)
+    .DIP_PAUSE(DIP_PAUSE),
+    .FM_CEN_OUT(b_fm_cen_out),
+    .FM_CEN_P1_OUT(b_fm_cen_p1_out),
+    .FM_CS_N_OUT(b_fm_cs_n_out),
+    .FM_WR_N_OUT(b_fm_wr_n_out),
+    .FM_A0_OUT(b_fm_a0_out),
+    .FM_DIN_OUT(b_fm_din_out),
+    .FM_DOUT_IN(jt_fm_dout),
+    .FM_IRQ_N_IN(jt_fm_irq_n),
+    .FM_SAMPLE_IN(jt_fm_sample),
+    .FM_XLEFT_IN(jt_fm_xleft),
+    .FM_XRIGHT_IN(jt_fm_xright),
+    .OKI0_CEN_OUT(b_oki0_cen_out),
+    .OKI0_SS_OUT(b_oki0_ss_out),
+    .OKI0_WR_N_OUT(b_oki0_wr_n_out),
+    .OKI0_DIN_OUT(b_oki0_din_out),
+    .OKI0_DOUT_IN(jt_oki0_dout),
+    .OKI0_ROM_ADDR_IN(jt_oki0_rom_addr),
+    .OKI0_ROM_DATA_OUT(b_oki0_rom_data_out),
+    .OKI0_ROM_OK_OUT(b_oki0_rom_ok_out),
+    .OKI0_SOUND_IN(jt_oki0_sound),
+    .OKI0_SAMPLE_IN(jt_oki0_sample),
+    .OKI1_CEN_OUT(b_oki1_cen_out),
+    .OKI1_SS_OUT(b_oki1_ss_out),
+    .OKI1_WR_N_OUT(b_oki1_wr_n_out),
+    .OKI1_DIN_OUT(b_oki1_din_out),
+    .OKI1_DOUT_IN(jt_oki1_dout),
+    .OKI1_ROM_ADDR_IN(jt_oki1_rom_addr),
+    .OKI1_ROM_DATA_OUT(b_oki1_rom_data_out),
+    .OKI1_ROM_OK_OUT(b_oki1_rom_ok_out),
+    .OKI1_SOUND_IN(jt_oki1_sound),
+    .OKI1_SAMPLE_IN(jt_oki1_sample)
+);
+
+raizing_shared_jt_audio u_shared_jt_audio(
+    .CLK96(CLK96),
+    .RESET96(RESET96),
+    .ACTIVE(active_is_garegga | active_is_batrider),
+    .FM_CEN(active_is_garegga ? g_fm_cen_out : b_fm_cen_out),
+    .FM_CEN_P1(active_is_garegga ? g_fm_cen_p1_out : b_fm_cen_p1_out),
+    .FM_CS_N(active_is_garegga ? g_fm_cs_n_out : b_fm_cs_n_out),
+    .FM_WR_N(active_is_garegga ? g_fm_wr_n_out : b_fm_wr_n_out),
+    .FM_A0(active_is_garegga ? g_fm_a0_out : b_fm_a0_out),
+    .FM_DIN(active_is_garegga ? g_fm_din_out : b_fm_din_out),
+    .FM_DOUT(jt_fm_dout),
+    .FM_IRQ_N(jt_fm_irq_n),
+    .FM_SAMPLE(jt_fm_sample),
+    .FM_XLEFT(jt_fm_xleft),
+    .FM_XRIGHT(jt_fm_xright),
+    .OKI0_CEN(active_is_garegga ? g_oki0_cen_out : b_oki0_cen_out),
+    .OKI0_SS(active_is_garegga ? g_oki0_ss_out : b_oki0_ss_out),
+    .OKI0_WR_N(active_is_garegga ? g_oki0_wr_n_out : b_oki0_wr_n_out),
+    .OKI0_DIN(active_is_garegga ? g_oki0_din_out : b_oki0_din_out),
+    .OKI0_DOUT(jt_oki0_dout),
+    .OKI0_ROM_ADDR(jt_oki0_rom_addr),
+    .OKI0_ROM_DATA(active_is_garegga ? g_oki0_rom_data_out : b_oki0_rom_data_out),
+    .OKI0_ROM_OK(active_is_garegga ? g_oki0_rom_ok_out : b_oki0_rom_ok_out),
+    .OKI0_SOUND(jt_oki0_sound),
+    .OKI0_SAMPLE(jt_oki0_sample),
+    .OKI1_CEN(active_is_batrider ? b_oki1_cen_out : 1'b0),
+    .OKI1_SS(active_is_batrider ? b_oki1_ss_out : 1'b0),
+    .OKI1_WR_N(active_is_batrider ? b_oki1_wr_n_out : 1'b1),
+    .OKI1_DIN(active_is_batrider ? b_oki1_din_out : 8'd0),
+    .OKI1_DOUT(jt_oki1_dout),
+    .OKI1_ROM_ADDR(jt_oki1_rom_addr),
+    .OKI1_ROM_DATA(active_is_batrider ? b_oki1_rom_data_out : 8'd0),
+    .OKI1_ROM_OK(active_is_batrider ? b_oki1_rom_ok_out : 1'b0),
+    .OKI1_SOUND(jt_oki1_sound),
+    .OKI1_SAMPLE(jt_oki1_sample)
 );
 
 bakraid_sound u_bakraid_sound(

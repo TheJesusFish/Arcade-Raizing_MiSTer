@@ -22,7 +22,9 @@
 * You should have received a copy of the GNU General Public License
 * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-module batrider_sound (
+module batrider_sound #(
+    parameter EXTERNAL_CHIPS = 0
+)(
     input                CLK,
     input                CLK96,
     input                YM2151_CEN,
@@ -59,7 +61,41 @@ module batrider_sound (
     input          [7:0] SOUNDLATCH2,
     input          [1:0] FX_LEVEL,
     input          [5:0] SND_EN,
-	input		 DIP_PAUSE
+	input		 DIP_PAUSE,
+
+    output               FM_CEN_OUT,
+    output               FM_CEN_P1_OUT,
+    output               FM_CS_N_OUT,
+    output               FM_WR_N_OUT,
+    output               FM_A0_OUT,
+    output         [7:0] FM_DIN_OUT,
+    input          [7:0] FM_DOUT_IN,
+    input                FM_IRQ_N_IN,
+    input                FM_SAMPLE_IN,
+    input signed  [15:0] FM_XLEFT_IN,
+    input signed  [15:0] FM_XRIGHT_IN,
+
+    output               OKI0_CEN_OUT,
+    output               OKI0_SS_OUT,
+    output               OKI0_WR_N_OUT,
+    output         [7:0] OKI0_DIN_OUT,
+    input          [7:0] OKI0_DOUT_IN,
+    input         [17:0] OKI0_ROM_ADDR_IN,
+    output         [7:0] OKI0_ROM_DATA_OUT,
+    output               OKI0_ROM_OK_OUT,
+    input signed  [13:0] OKI0_SOUND_IN,
+    input                OKI0_SAMPLE_IN,
+
+    output               OKI1_CEN_OUT,
+    output               OKI1_SS_OUT,
+    output               OKI1_WR_N_OUT,
+    output         [7:0] OKI1_DIN_OUT,
+    input          [7:0] OKI1_DOUT_IN,
+    input         [17:0] OKI1_ROM_ADDR_IN,
+    output         [7:0] OKI1_ROM_DATA_OUT,
+    output               OKI1_ROM_OK_OUT,
+    input signed  [13:0] OKI1_SOUND_IN,
+    input                OKI1_SAMPLE_IN
 );
 
 // assign ACK = 1'b1;
@@ -79,6 +115,7 @@ wire oki0_bank_wr = oki_bank_wr_dec && !A[2];
 wire oki1_bank_wr = oki_bank_wr_dec &&  A[2];
 wire [2:0] oki_bank_offset = A[2:0] & 3'b110;
 reg [3:0] bank = 2; // init bank to 2
+reg ram_cs, fm_cs;
 wire [7:0] ram_dout, dout, fm_dout, oki0_dout, oki1_dout;
 wire signed [15:0] fm_left, fm_right;
 wire signed [16:0] fm_mix_sum = {fm_left[15], fm_left} + {fm_right[15], fm_right};
@@ -104,6 +141,39 @@ wire oki0_wr_pulse = !oki0_wr_dec && oki0_wr_l;
 wire oki1_wr_pulse = !oki1_wr_dec && oki1_wr_l;
 wire oki0_bank_wr_pulse = !oki0_bank_wr && oki0_bank_wr_l;
 wire oki1_bank_wr_pulse = !oki1_bank_wr && oki1_bank_wr_l;
+wire nmi_n;
+reg soundlatch3_wr,
+    soundlatch4_wr,
+    batrider_sndirq_w,
+    batrider_clear_nmi_w,
+    soundlatch_rd,
+    soundlatch2_rd,
+    ymsnd_rd,
+    okim6295_device_0_rd,
+    okim6295_device_0_wr_q,
+    okim6295_device_1_rd,
+    okim6295_device_1_wr_q;
+
+assign FM_CEN_OUT = YM2151_CEN & DIP_PAUSE;
+assign FM_CEN_P1_OUT = YM2151_CEN2 & DIP_PAUSE;
+assign FM_CS_N_OUT = !fm_chip_select;
+assign FM_WR_N_OUT = fm_write_n;
+assign FM_A0_OUT = fm_a0;
+assign FM_DIN_OUT = fm_din;
+
+assign OKI0_CEN_OUT = OKI_CEN & DIP_PAUSE;
+assign OKI0_SS_OUT = 1'b1;
+assign OKI0_WR_N_OUT = ~okim6295_device_0_wr_q;
+assign OKI0_DIN_OUT = oki0_din;
+assign OKI0_ROM_DATA_OUT = PCM_DOUT;
+assign OKI0_ROM_OK_OUT = PCM_OK;
+
+assign OKI1_CEN_OUT = OKI_CEN & DIP_PAUSE;
+assign OKI1_SS_OUT = 1'b0;
+assign OKI1_WR_N_OUT = ~okim6295_device_1_wr_q;
+assign OKI1_DIN_OUT = oki1_din;
+assign OKI1_ROM_DATA_OUT = PCM1_DOUT;
+assign OKI1_ROM_OK_OUT = PCM1_OK;
 
 //debugging
 `ifdef SIMULATION
@@ -205,22 +275,7 @@ jtframe_mixer #(.W0(16), .W1(16), .WOUT(16)) u_mix_left(
     .peak   ( peak_l    )
 );
 
-//io
-wire nmi_n;
-reg soundlatch3_wr,
-    soundlatch4_wr,
-    batrider_sndirq_w,
-    batrider_clear_nmi_w,
-    soundlatch_rd,
-    soundlatch2_rd,
-    ymsnd_rd,
-    okim6295_device_0_rd,
-    okim6295_device_0_wr_q,
-    okim6295_device_1_rd,
-    okim6295_device_1_wr_q;
-
 //address bus
-reg ram_cs, fm_cs;
 always @(posedge CLK96) begin
     if(RESET96) begin
         soundlatch3_wr <= 0;
@@ -407,6 +462,8 @@ raizing_t80_sysz80 #(.RAM_AW(13), .RECOVERY(0)) u_cpu(
 assign PCM_CS = 1'b1;
 assign PCM1_CS = 1'b1;
 
+generate
+if(!EXTERNAL_CHIPS) begin : gen_internal_chips
 jt6295 #(.INTERPOL(2)) u_adpcm_0(
     .rst        ( RESET96       ),
     .clk        ( CLK96       ),
@@ -464,5 +521,21 @@ jt51 u_jt51(
     .xleft      ( fm_left   ),
     .xright     ( fm_right  )
 );
+end else begin : gen_external_chips
+    assign fm_dout = FM_DOUT_IN;
+    assign int_n = FM_IRQ_N_IN;
+    assign sample = FM_SAMPLE_IN;
+    assign fm_left = FM_XLEFT_IN;
+    assign fm_right = FM_XRIGHT_IN;
+    assign oki0_dout = OKI0_DOUT_IN;
+    assign oki0_pcm_addr = OKI0_ROM_ADDR_IN;
+    assign oki0_pre = OKI0_SOUND_IN;
+    assign oki0_sample = OKI0_SAMPLE_IN;
+    assign oki1_dout = OKI1_DOUT_IN;
+    assign oki1_pcm_addr = OKI1_ROM_ADDR_IN;
+    assign oki1_pre = OKI1_SOUND_IN;
+    assign oki1_sample = OKI1_SAMPLE_IN;
+end
+endgenerate
 
 endmodule

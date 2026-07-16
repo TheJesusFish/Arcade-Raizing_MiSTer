@@ -4,6 +4,7 @@
 # across Garegga-family, Batrider, and Bakraid board devices.
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_game.v]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_board.v]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_shared_jt_audio.v]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_main_cpu.v]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_resync.v]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_rom_4slots_rr.v]

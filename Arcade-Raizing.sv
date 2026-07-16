@@ -258,6 +258,8 @@ reg         video_vs_l;
 reg  [ 1:0] aspect_l;
 reg  [ 1:0] rotate_menu_l;
 reg  [ 6:0] video_refresh_frames;
+wire [ 1:0] rotate_menu  = frame_status[40:39];
+wire        framebuf_flip = rotate_menu == 2'b10;
 
 // ROM download
 wire          ioctl_rom, ioctl_cart, dwnld_busy;
@@ -267,7 +269,7 @@ always @(posedge clk_sys) begin
     dwnld_busy_l <= dwnld_busy;
     video_vs_l <= VGA_VS;
     aspect_l <= frame_status[17:16];
-    rotate_menu_l <= frame_status[39:38];
+    rotate_menu_l <= rotate_menu;
 
     if (sys_rst) begin
         video_mode_refresh <= 1'b0;
@@ -279,7 +281,7 @@ always @(posedge clk_sys) begin
     end else begin
         if ((dwnld_busy_l && !dwnld_busy) ||
             (aspect_l != frame_status[17:16]) ||
-            (rotate_menu_l != frame_status[39:38])) begin
+            (rotate_menu_l != rotate_menu)) begin
             video_refresh_frames <= 7'd60;
         end else if (video_refresh_frames != 7'd0 && !video_vs_l && VGA_VS) begin
             video_refresh_frames <= video_refresh_frames - 7'd1;
@@ -588,8 +590,6 @@ raizing_resync u_resync(
     .vs_out     ( vs_resync     )
 );
 
-reg         framebuf_flip;      // extra OSD options for rotation, bit 0 = rotate, bit 1 = flip
-
 // OSD option visibility. This is linked to the d(D) and h(H) prefixes in cfgstr
 wire        vertical;
 
@@ -606,11 +606,6 @@ assign status_menumask[15:7] = 0,
        status_menumask[3]    =~video_rotated, // scan FX options do not work with rotated video (except HQ2x)
        status_menumask[2]    = ~hsize_enable, // horizontal scaling
        status_menumask[0]    = direct_video;
-
-always @(posedge clk_sys) begin
-    // Native raster polarity makes option 1 the tate flip.
-    framebuf_flip <= frame_status[39:38]==1;
-end
 
 // this places the pxl1_cen in the pixel centre
 always @(posedge clk_sys) pxl1_cen <= pxl2_cen & ~pxl_cen;
