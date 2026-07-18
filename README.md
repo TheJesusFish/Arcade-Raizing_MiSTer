@@ -4,6 +4,8 @@ This is a Codex-assisted update and refactoring of the Raizing FPGA core by Pram
 
 The codebase is largely still Pramod's, but updated to run on modern MiSTer hardware, and consolidated into a single core.
 
+Save state code is thanks to [WickerWaka](https://github.com/wickerwaka)'s amazing work with the TaitoF2 and PGM cores. This made chasing down bugs MUCH easier.
+
 ## Supported Games
 
 | Title                                                                                                                 | Status        |
