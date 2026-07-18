@@ -1,3 +1,6 @@
+// This file is a Codex-assisted refactoring and update
+// based on the original work of Pramod Somashekar (pram0d)
+
 /*
 * <-- pr4m0d -->
 * https://pram0d.com
@@ -19,7 +22,9 @@
 * You should have received a copy of the GNU General Public License
 * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-module raizing_video (
+module raizing_video #(
+    parameter SS_ENABLE = 0
+)(
     input         CLK,
     input         CLK96,
     input         PIXEL_CEN,
@@ -37,6 +42,8 @@ module raizing_video (
     input  [15:0] TEXTSELECT_DATA,
     output  [7:0] TEXTSCROLL_ADDR,
     input  [15:0] TEXTSCROLL_DATA,
+    input         SHIFT_SPRITE_PRI,
+    input         FAST_OBJ_QUEUE,
 
     //graphics ROM
     output  [1:0] GFX_CS,
@@ -98,17 +105,38 @@ module raizing_video (
     output  [7:0] GREEN,
     output  [7:0] BLUE,
 
+    input   [7:0] GAME,
+
     input   [8:0] HS_START,
     input   [8:0] HS_END,
     input   [8:0] VS_START,
     input   [8:0] VS_END,
 
-    input FLIP
+    input FLIP,
+
+    input          SS_FREEZE,
+    input  [63:0]  SS_DATA,
+    input  [31:0]  SS_ADDR,
+    input   [7:0]  SS_SELECT,
+    input          SS_WRITE,
+    input          SS_READ,
+    input          SS_QUERY,
+    output [63:0]  SS_DATA_OUT,
+    output         SS_ACK,
+    output         SS_QUIESCED
 );
 
 wire ACTIVE;
 wire [8:0] H;
 wire [8:0] VRENDER;
+wire pixel_cen_run = PIXEL_CEN && !(SS_ENABLE && SS_FREEZE);
+
+wire [43:0] ss_vtimer_state;
+wire [43:0] ss_vtimer_restore;
+wire ss_vtimer_restore_we;
+wire [1:0] ss_response_ack;
+wire [127:0] ss_response_data;
+wire ss_gcu_quiesced;
 
 wire HB = ~LHBL, VB = ~LVBL;
 
@@ -121,10 +149,10 @@ wire [14:0] SCROLL2_PIXEL;
 wire [10:0] FINAL_PIXEL;
 
 //sync generated here is different than the GP9001 values, as those drive cpu interrupts.
-hvsync_generator u_hvsync(
+hvsync_generator #(.SS_ENABLE(SS_ENABLE)) u_hvsync(
     .clk(CLK),
     .clk96(CLK96),
-    .pxl_cen(PIXEL_CEN),
+    .pxl_cen(pixel_cen_run),
     .reset(RESET),
     .reset96(RESET96),
     .hsync(HS),
@@ -135,13 +163,17 @@ hvsync_generator u_hvsync(
     .hpos(H),
     .vpos(V),
     .vrender(VRENDER),
-    .flip(FLIP)
+    .flip(FLIP),
+    .ss_hold(SS_ENABLE && SS_FREEZE),
+    .ss_restore(ss_vtimer_restore_we),
+    .ss_state_in(ss_vtimer_restore),
+    .ss_state(ss_vtimer_state)
 );
 
 raizing_pal u_pal (
     .CLK(CLK),
     .CLK96(CLK96),
-    .PIXEL_CEN(PIXEL_CEN),
+    .PIXEL_CEN(pixel_cen_run),
     .RESET(RESET),
     .RESET96(RESET96),
     .LVBL(LVBL),
@@ -162,7 +194,7 @@ raizing_colmix u_colmix(
     .CLK96(CLK96),
     .RESET(RESET),
     .RESET96(RESET96),
-    .PIXEL_CEN(PIXEL_CEN),
+    .PIXEL_CEN(pixel_cen_run),
     .EXTRATEXT_PIXEL(EXTRATEXT_PIXEL),
     .SCROLL0_PIXEL(SCROLL0_PIXEL),
     .SCROLL1_PIXEL(SCROLL1_PIXEL),
@@ -175,7 +207,7 @@ raizing_colmix u_colmix(
 raizing_extratext u_extratext(
     .CLK(CLK),
     .CLK96(CLK96),
-    .PIXEL_CEN(PIXEL_CEN),
+    .PIXEL_CEN(pixel_cen_run),
     .RESET(RESET),
     .RESET96(RESET96),
     .VRENDER(VRENDER),
@@ -201,7 +233,8 @@ raizing_extratext u_extratext(
     .TEXTSCROLL_ADDR(TEXTSCROLL_ADDR),
     .TEXTSCROLL_DATA(TEXTSCROLL_DATA),
 
-    .EXTRATEXT_PIXEL(EXTRATEXT_PIXEL)
+    .EXTRATEXT_PIXEL(EXTRATEXT_PIXEL),
+    .GAME(GAME)
 );
 
 wire  [12:0] GP9001RAM_GCU_ADDR;
@@ -264,7 +297,7 @@ wire signed [12:0] TEXT_SCROLL_YOFFS;
 raizing_obj u_obj(
     .CLK(CLK),
     .CLK96(CLK96),
-    .PIXEL_CEN(PIXEL_CEN),
+    .PIXEL_CEN(pixel_cen_run),
     .RESET(RESET),
     .RESET96(RESET96),
     .VRENDER(VRENDER),
@@ -273,8 +306,8 @@ raizing_obj u_obj(
     .HB(HB),
     .VB(VB),
     .FLIPX(FLIP),
-    .SHIFT_SPRITE_PRI(1'b0),
-    .FAST_OBJ_QUEUE(1'b0),
+    .SHIFT_SPRITE_PRI(SHIFT_SPRITE_PRI),
+    .FAST_OBJ_QUEUE(FAST_OBJ_QUEUE),
 
     //interface with GP9001 RAM Mirror
     .GP9001RAM_GCU_ADDR(GP9001RAM_GCU_ADDR),
@@ -302,7 +335,7 @@ raizing_obj u_obj(
 raizing_scroll u_scroll(
     .CLK(CLK),
     .CLK96(CLK96),
-    .PIXEL_CEN(PIXEL_CEN),
+    .PIXEL_CEN(pixel_cen_run),
     .RESET(RESET),
     .RESET96(RESET96),
     .VRENDER(VRENDER),
@@ -359,12 +392,12 @@ raizing_scroll u_scroll(
     .SCROLL2_PIXEL(SCROLL2_PIXEL)
 );
 
-raizing_gcu u_gcu(
+raizing_gcu #(.SS_ENABLE(SS_ENABLE)) u_gcu(
     .RESET(RESET),
     .RESET96(RESET96),
     .CLK(CLK),
     .CLK96(CLK96),
-    .GFX_CLK(PIXEL_CEN),
+    .GFX_CLK(pixel_cen_run),
     .CS(GP9001CS),
     .ACK(GP9001ACK),
     .VINT(VINT),
@@ -376,6 +409,7 @@ raizing_gcu u_gcu(
     .GP9001_OP_SET_RAM_PTR(GP9001_OP_SET_RAM_PTR),
     .GP9001_OP_OBJECTBANK_WR(GP9001_OP_OBJECTBANK_WR),
     .GP9001_OBJECTBANK_SLOT(GP9001_OBJECTBANK_SLOT),
+    .GAME(GAME),
     .DIN(GP9001DIN),
     .DOUT(GP9001DOUT),
     .V(V),
@@ -478,8 +512,47 @@ raizing_gcu u_gcu(
     .HS_START(HS_START),
     .HS_END(HS_END),
     .VS_START(VS_START),
-    .VS_END(VS_END)
+    .VS_END(VS_END),
+
+    .SS_FREEZE(SS_FREEZE),
+    .SS_DATA(SS_DATA),
+    .SS_ADDR(SS_ADDR),
+    .SS_SELECT(SS_SELECT),
+    .SS_WRITE(SS_WRITE),
+    .SS_READ(SS_READ),
+    .SS_QUERY(SS_QUERY),
+    .SS_DATA_OUT(ss_response_data[0*64 +: 64]),
+    .SS_ACK(ss_response_ack[0]),
+    .SS_QUIESCED(ss_gcu_quiesced)
 );
 
+raizing_ss_wide_register #(
+    .WIDTH(44),
+    .SS_INDEX(28)
+) u_ss_vtimer(
+    .clk(CLK96),
+    .reset(RESET96),
+    .capture_data(ss_vtimer_state),
+    .restore_data(ss_vtimer_restore),
+    .restore_we(ss_vtimer_restore_we),
+    .ss_data(SS_DATA),
+    .ss_addr(SS_ADDR),
+    .ss_select(SS_SELECT),
+    .ss_write(SS_WRITE),
+    .ss_read(SS_READ),
+    .ss_query(SS_QUERY),
+    .ss_data_out(ss_response_data[1*64 +: 64]),
+    .ss_ack(ss_response_ack[1])
+);
+
+raizing_ss_response_mux #(.COUNT(2)) u_ss_response(
+    .ack(ss_response_ack),
+    .data(ss_response_data),
+    .ack_out(SS_ACK),
+    .data_out(SS_DATA_OUT)
+);
+
+assign SS_QUIESCED = !SS_ENABLE ||
+                     (SS_FREEZE && ss_gcu_quiesced);
 
 endmodule

@@ -40,7 +40,8 @@ module garegga_sdram #(
 			  SSTRIKER_ROMZ80_PRG_LEN = 25'h10000,
 			  SSTRIKER_GP9001_TILE_LEN = 25'h200000,
 			  SSTRIKER_TEXTROM_LEN = 25'h8000,
-			  SSTRIKER_PCM_DATA_LEN = 25'h40000
+			  SSTRIKER_PCM_DATA_LEN = 25'h40000,
+              SS_ENABLE = 0
 )(
     input RESET48,
     input CLK48,
@@ -132,7 +133,18 @@ module garegga_sdram #(
 	input    [1:0] HISCORE_WE,
 	input   [15:0] HISCORE_DIN,
 	output  [15:0] HISCORE_DOUT,
-	input    [6:0] HISCORE_ADDR 
+	input    [6:0] HISCORE_ADDR,
+
+    input          SS_FREEZE,
+    input  [63:0]  SS_DATA,
+    input  [31:0]  SS_ADDR,
+    input   [7:0]  SS_SELECT,
+    input          SS_WRITE,
+    input          SS_READ,
+    input          SS_QUERY,
+    output [63:0]  SS_DATA_OUT,
+    output         SS_ACK,
+    output         SS_QUIESCED
 );
 
 //loader
@@ -382,20 +394,55 @@ raizing_dual_ram16 #(.AW(14)) u_textrom(
 wire dump_we = IOCTL_WR & IOCTL_RAM;
 wire [15:0] hiscore_q1;
 assign IOCTL_DIN = IOCTL_ADDR[0] ? hiscore_q1[7:0] : hiscore_q1[15:8];
+wire ss_freeze = SS_ENABLE && SS_FREEZE;
+wire ss_hiscore_active;
+wire [6:0] ss_hiscore_addr;
+wire [15:0] ss_hiscore_data;
+wire ss_hiscore_we;
+wire [6:0] hiscore_dump_addr = ss_hiscore_active ?
+                               ss_hiscore_addr : IOCTL_ADDR[7:1];
+wire [15:0] hiscore_dump_data = ss_hiscore_active ?
+                                ss_hiscore_data : {2{IOCTL_DOUT}};
+wire [1:0] hiscore_dump_we = ss_hiscore_active ?
+                             {2{ss_hiscore_we}} :
+                             {dump_we && !IOCTL_ADDR[0],
+                              dump_we && IOCTL_ADDR[0]};
 
-raizing_dual_ram16 #(.AW(7)) u_hiscore_table(
+raizing_dual_ram16 #(.AW(7), .SS_ENABLE(SS_ENABLE)) u_hiscore_table(
     .clk0   ( CLK  ),
     .clk1   ( CLK  ),
     // First port: internal use
     .addr0  ( HISCORE_ADDR  ),
     .data0  ( HISCORE_DIN   ),
-    .we0    ( HISCORE_WE    ),
+    .we0    ( HISCORE_WE & {2{!ss_freeze}} ),
     .q0     ( HISCORE_DOUT  ),
     // Second port: dump
-    .addr1  ( IOCTL_ADDR[7:1] ),
-    .data1  ( {2{IOCTL_DOUT}}  ),
-    .we1    ( {dump_we && !IOCTL_ADDR[0], dump_we && IOCTL_ADDR[0]} ),
-    .q1     ( hiscore_q1 )
+    .addr1  ( hiscore_dump_addr ),
+    .data1  ( hiscore_dump_data ),
+    .we1    ( hiscore_dump_we ),
+    .q1     ( hiscore_q1 ),
+    .ss_active(ss_hiscore_active),
+    .ss_data(ss_hiscore_data),
+    .ss_addr(ss_hiscore_addr),
+    .ss_we({2{ss_hiscore_we}}),
+    .ss_q()
 );
+
+raizing_ss_ram_adapter #(
+    .WIDTH(16),
+    .ADDR_WIDTH(7),
+    .SS_INDEX(44)
+) u_ss_hiscore(
+    .clk(CLK), .reset(RESET),
+    .ss_data(SS_DATA), .ss_addr(SS_ADDR),
+    .ss_select(SS_SELECT), .ss_write(SS_WRITE),
+    .ss_read(SS_READ), .ss_query(SS_QUERY),
+    .ss_data_out(SS_DATA_OUT), .ss_ack(SS_ACK),
+    .ram_active(ss_hiscore_active), .ram_addr(ss_hiscore_addr),
+    .ram_data(ss_hiscore_data), .ram_we(ss_hiscore_we),
+    .ram_q(hiscore_q1)
+);
+
+assign SS_QUIESCED = !SS_ENABLE || ss_freeze;
 
 endmodule

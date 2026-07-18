@@ -11,7 +11,9 @@
 * the Free Software Foundation, either version 3 of the License, or
 * (at your option) any later version.
 */
-module raizing_board(
+module raizing_board #(
+    parameter SS_ENABLE = 0
+)(
     input [7:0] GAME_ID,
     input [7:0] TARGET_GAME_ID,
 
@@ -117,7 +119,27 @@ module raizing_board(
 
     // extra clocks
     input                clk24,
-    input                rst24
+    input                rst24,
+
+    input                SS_ACTIVE,
+    input                SS_FREEZE,
+    input                SS_SAVE_BEGIN,
+    input                SS_SAVE_RESUME,
+    input                SS_RESTORE_BEGIN,
+    input                SS_RESTORE_WINDOW,
+    output               SS_SAVE_READY,
+    output               SS_SAVE_DONE,
+    output reg           SS_RESTORE_DONE,
+    output               SS_GAME_QUIESCED,
+    output               SS_CPU_IDLE,
+    input         [63:0] SS_DATA,
+    input         [31:0] SS_ADDR,
+    input          [7:0] SS_SELECT,
+    input                SS_WRITE,
+    input                SS_READ,
+    input                SS_QUERY,
+    output        [63:0] SS_DATA_OUT,
+    output               SS_ACK
 );
 
 localparam [7:0] RAIZING_GAREGGA  = 8'h00;
@@ -322,7 +344,42 @@ assign HISCORE_DOUT = active_is_garegga ? g_HISCORE_DOUT : b_HISCORE_DOUT;
 /* EEPROM */
 wire EEPROM_SCLK, EEPROM_SCS, EEPROM_SDI, EEPROM_SDO;
 
-raizing_main_cpu u_cpu (
+wire [63:0] ss_cpu_data_out;
+wire ss_cpu_ack;
+wire ss_cpu_busy;
+wire ss_cpu_idle;
+wire ss_main_restore_done;
+wire [63:0] ss_garegga_sound_data_out;
+wire [63:0] ss_batrider_sound_data_out;
+wire [63:0] ss_bakraid_sound_data_out;
+wire ss_garegga_sound_ack, ss_batrider_sound_ack, ss_bakraid_sound_ack;
+wire ss_garegga_sound_quiesced;
+wire ss_batrider_sound_quiesced;
+wire ss_bakraid_sound_quiesced;
+wire [63:0] ss_shared_audio_data_out;
+wire ss_shared_audio_ack;
+wire ss_shared_audio_replay_busy;
+wire ss_bakraid_audio_replay_busy;
+wire [63:0] ss_video_data_out;
+wire ss_video_ack, ss_video_quiesced;
+wire [63:0] ss_text_data_out;
+wire ss_text_ack, ss_text_quiesced;
+wire [63:0] ss_garegga_storage_data_out;
+wire [63:0] ss_batrider_storage_data_out;
+wire [63:0] ss_bakraid_storage_data_out;
+wire ss_garegga_storage_ack, ss_batrider_storage_ack;
+wire ss_bakraid_storage_ack;
+wire ss_garegga_storage_quiesced, ss_batrider_storage_quiesced;
+wire ss_bakraid_storage_quiesced;
+wire [7:0] ss_text_select = active_is_battle ? SS_SELECT : 8'hff;
+wire [7:0] ss_garegga_storage_select = active_is_garegga ?
+                                       SS_SELECT : 8'hff;
+wire [7:0] ss_batrider_storage_select = active_is_batrider ?
+                                        SS_SELECT : 8'hff;
+wire [7:0] ss_bakraid_storage_select = active_is_bakraid ?
+                                       SS_SELECT : 8'hff;
+
+raizing_main_cpu #(.SS_ENABLE(SS_ENABLE)) u_cpu (
     .CLK(CLK),
     .CLK96(CLK96),
     .RESET(RESET),
@@ -424,94 +481,90 @@ raizing_main_cpu u_cpu (
     .EEPROM_SCLK(EEPROM_SCLK),
     .EEPROM_SDI(EEPROM_SDI),
     .EEPROM_SDO(EEPROM_SDO),
-    .EEPROM_SCS(EEPROM_SCS)
+    .EEPROM_SCS(EEPROM_SCS),
+    .SS_FREEZE(SS_FREEZE),
+    .SS_SAVE_BEGIN(SS_SAVE_BEGIN),
+    .SS_SAVE_RESUME(SS_SAVE_RESUME),
+    .SS_RESTORE_BEGIN(SS_RESTORE_BEGIN),
+    .SS_RESTORE_WINDOW(SS_RESTORE_WINDOW),
+    .SS_SAVE_READY(SS_SAVE_READY),
+    .SS_SAVE_DONE(SS_SAVE_DONE),
+    .SS_RESTORE_DONE(ss_main_restore_done),
+    .SS_BUSY(ss_cpu_busy),
+    .SS_CPU_IDLE(ss_cpu_idle),
+    .SS_DATA(SS_DATA),
+    .SS_ADDR(SS_ADDR),
+    .SS_SELECT(SS_SELECT),
+    .SS_WRITE(SS_WRITE),
+    .SS_READ(SS_READ),
+    .SS_QUERY(SS_QUERY),
+    .SS_DATA_OUT(ss_cpu_data_out),
+    .SS_ACK(ss_cpu_ack)
 );
 
 /* video */
-wire g_GP9001ACK, g_VINT;
-wire [15:0] g_GCU_DOUT;
-wire g_HSYNC, g_VSYNC, g_FBLANK, g_LHBL, g_LVBL, g_LHBLL, g_LVBLL, g_HS, g_VS;
-wire [8:0] g_V;
-wire [7:0] g_red, g_green, g_blue;
-wire g_GFX_CS, g_GFX_OK, g_GFXSCR0_CS, g_GFXSCR0_OK, g_GFXSCR1_CS, g_GFXSCR1_OK, g_GFXSCR2_CS, g_GFXSCR2_OK;
+wire g_GFX_CS, g_GFX_OK, g_GFXSCR0_CS, g_GFXSCR0_OK;
+wire g_GFXSCR1_CS, g_GFXSCR1_OK, g_GFXSCR2_CS, g_GFXSCR2_OK;
 wire [21:0] g_GFX0_ADDR, g_GFX0SCR0_ADDR, g_GFX0SCR1_ADDR, g_GFX0SCR2_ADDR;
 wire [31:0] g_GFX0_DOUT, g_GFX0SCR0_DOUT, g_GFX0SCR1_DOUT, g_GFX0SCR2_DOUT;
-raizing_video_single u_garegga_video(
-    .CLK(CLK),
-    .CLK96(CLK96),
-    .PIXEL_CEN(g_CEN675),
-    .RESET(RESET | !active_is_garegga),
-    .RESET96(RESET96 | !active_is_garegga),
-    .SHIFT_SPRITE_PRI(GAME_ID == RAIZING_SSTRIKER ? 1'b1 : 1'b0),
-    .FAST_OBJ_QUEUE(GAME_ID == RAIZING_GAREGGA ? 1'b1 : 1'b0),
-    .GFX_CS(g_GFX_CS),
-    .GFX_OK(g_GFX_OK),
-    .GFX0_ADDR(g_GFX0_ADDR),
-    .GFX0_DOUT(g_GFX0_DOUT),
-    .GFXSCR0_CS(g_GFXSCR0_CS),
-    .GFXSCR0_OK(g_GFXSCR0_OK),
-    .GFX0SCR0_ADDR(g_GFX0SCR0_ADDR),
-    .GFX0SCR0_DOUT(g_GFX0SCR0_DOUT),
-    .GFXSCR1_CS(g_GFXSCR1_CS),
-    .GFXSCR1_OK(g_GFXSCR1_OK),
-    .GFX0SCR1_ADDR(g_GFX0SCR1_ADDR),
-    .GFX0SCR1_DOUT(g_GFX0SCR1_DOUT),
-    .GFXSCR2_CS(g_GFXSCR2_CS),
-    .GFXSCR2_OK(g_GFXSCR2_OK),
-    .GFX0SCR2_ADDR(g_GFX0SCR2_ADDR),
-    .GFX0SCR2_DOUT(g_GFX0SCR2_DOUT),
-    .TEXTROM_ADDR(g_TEXTROM_ADDR),
-    .TEXTROM_DATA(g_TEXTROM_DATA),
-    .GP9001CS(GP9001CS & active_is_garegga),
-    .GP9001ACK(g_GP9001ACK),
-    .VINT(g_VINT),
-    .GP9001DIN(CPU_DOUT),
-    .GP9001DOUT(g_GCU_DOUT),
-    .GP9001_OP_SELECT_REG(GP9001_OP_SELECT_REG),
-    .GP9001_OP_WRITE_REG(GP9001_OP_WRITE_REG),
-    .GP9001_OP_WRITE_RAM(GP9001_OP_WRITE_RAM),
-    .GP9001_OP_READ_RAM_H(GP9001_OP_READ_RAM_H),
-    .GP9001_OP_READ_RAM_L(GP9001_OP_READ_RAM_L),
-    .GP9001_OP_SET_RAM_PTR(GP9001_OP_SET_RAM_PTR),
-    .GP9001OUT(),
-    .LVBL_DLY(g_LVBL),
-    .LHBL_DLY(g_LHBL),
-    .LVBL(g_LVBLL),
-    .LHBL(g_LHBLL),
-    .HS(g_HS),
-    .VS(g_VS),
-    .CPU_HSYNC(g_HSYNC),
-    .CPU_VSYNC(g_VSYNC),
-    .CPU_FBLANK(g_FBLANK),
-    .V(g_V),
-    .RED(g_red),
-    .GREEN(g_green),
-    .BLUE(g_blue),
-    .HS_START(9'd325),
-    .HS_END(9'd380),
-    .VS_START(9'd232),
-    .VS_END(9'd245),
-    .TEXTVRAM_ADDR(g_TEXTVRAM_ADDR),
-    .TEXTVRAM_DATA(g_TEXTVRAM_DATA),
-    .PALRAM_ADDR(g_PALRAM_ADDR),
-    .PALRAM_DATA(g_PALRAM_DATA),
-    .TEXTSELECT_ADDR(g_TEXTSELECT_ADDR),
-    .TEXTSELECT_DATA(g_TEXTSELECT_DATA),
-    .TEXTSCROLL_ADDR(g_TEXTSCROLL_ADDR),
-    .TEXTSCROLL_DATA(g_TEXTSCROLL_DATA),
-    .GAME(GAME_ID),
-    .FLIP(g_FLIP)
-);
 
-wire b_GP9001ACK, b_VINT;
-wire [15:0] b_GCU_DOUT;
-wire b_HSYNC, b_VSYNC, b_FBLANK, b_LHBL, b_LVBL, b_LHBLL, b_LVBLL, b_HS, b_VS;
-wire [8:0] b_V;
-wire [7:0] b_red, b_green, b_blue;
-wire [1:0] b_GFX_CS, b_GFX_OK, b_GFXSCR0_CS, b_GFXSCR0_OK, b_GFXSCR1_CS, b_GFXSCR1_OK, b_GFXSCR2_CS, b_GFXSCR2_OK;
-wire [21:0] b_GFX0_ADDR, b_GFX1_ADDR, b_GFX0SCR0_ADDR, b_GFX1SCR0_ADDR, b_GFX0SCR1_ADDR, b_GFX1SCR1_ADDR, b_GFX0SCR2_ADDR, b_GFX1SCR2_ADDR;
-wire [31:0] b_GFX0_DOUT, b_GFX1_DOUT, b_GFX0SCR0_DOUT, b_GFX1SCR0_DOUT, b_GFX0SCR1_DOUT, b_GFX1SCR1_DOUT, b_GFX0SCR2_DOUT, b_GFX1SCR2_DOUT;
-TVRMCTL7 u_textvramctl (
+wire [1:0] b_GFX_CS, b_GFX_OK, b_GFXSCR0_CS, b_GFXSCR0_OK;
+wire [1:0] b_GFXSCR1_CS, b_GFXSCR1_OK, b_GFXSCR2_CS, b_GFXSCR2_OK;
+wire [21:0] b_GFX0_ADDR, b_GFX1_ADDR, b_GFX0SCR0_ADDR, b_GFX1SCR0_ADDR;
+wire [21:0] b_GFX0SCR1_ADDR, b_GFX1SCR1_ADDR, b_GFX0SCR2_ADDR, b_GFX1SCR2_ADDR;
+wire [31:0] b_GFX0_DOUT, b_GFX1_DOUT, b_GFX0SCR0_DOUT, b_GFX1SCR0_DOUT;
+wire [31:0] b_GFX0SCR1_DOUT, b_GFX1SCR1_DOUT, b_GFX0SCR2_DOUT, b_GFX1SCR2_DOUT;
+
+wire [1:0] v_GFX_CS, v_GFXSCR0_CS, v_GFXSCR1_CS, v_GFXSCR2_CS;
+wire [21:0] v_GFX0_ADDR, v_GFX1_ADDR, v_GFX0SCR0_ADDR, v_GFX1SCR0_ADDR;
+wire [21:0] v_GFX0SCR1_ADDR, v_GFX1SCR1_ADDR, v_GFX0SCR2_ADDR, v_GFX1SCR2_ADDR;
+wire [1:0] v_GFX_OK = active_is_garegga ? {1'b0, g_GFX_OK} : b_GFX_OK;
+wire [1:0] v_GFXSCR0_OK = active_is_garegga ? {1'b0, g_GFXSCR0_OK} : b_GFXSCR0_OK;
+wire [1:0] v_GFXSCR1_OK = active_is_garegga ? {1'b0, g_GFXSCR1_OK} : b_GFXSCR1_OK;
+wire [1:0] v_GFXSCR2_OK = active_is_garegga ? {1'b0, g_GFXSCR2_OK} : b_GFXSCR2_OK;
+wire [31:0] v_GFX0_DOUT = active_is_garegga ? g_GFX0_DOUT : b_GFX0_DOUT;
+wire [31:0] v_GFX0SCR0_DOUT = active_is_garegga ? g_GFX0SCR0_DOUT : b_GFX0SCR0_DOUT;
+wire [31:0] v_GFX0SCR1_DOUT = active_is_garegga ? g_GFX0SCR1_DOUT : b_GFX0SCR1_DOUT;
+wire [31:0] v_GFX0SCR2_DOUT = active_is_garegga ? g_GFX0SCR2_DOUT : b_GFX0SCR2_DOUT;
+
+assign g_GFX_CS = v_GFX_CS[0] & active_is_garegga;
+assign g_GFXSCR0_CS = v_GFXSCR0_CS[0] & active_is_garegga;
+assign g_GFXSCR1_CS = v_GFXSCR1_CS[0] & active_is_garegga;
+assign g_GFXSCR2_CS = v_GFXSCR2_CS[0] & active_is_garegga;
+assign b_GFX_CS = v_GFX_CS & {2{active_is_battle}};
+assign b_GFXSCR0_CS = v_GFXSCR0_CS & {2{active_is_battle}};
+assign b_GFXSCR1_CS = v_GFXSCR1_CS & {2{active_is_battle}};
+assign b_GFXSCR2_CS = v_GFXSCR2_CS & {2{active_is_battle}};
+
+assign g_GFX0_ADDR = v_GFX0_ADDR;
+assign g_GFX0SCR0_ADDR = v_GFX0SCR0_ADDR;
+assign g_GFX0SCR1_ADDR = v_GFX0SCR1_ADDR;
+assign g_GFX0SCR2_ADDR = v_GFX0SCR2_ADDR;
+assign b_GFX0_ADDR = v_GFX0_ADDR;
+assign b_GFX1_ADDR = v_GFX1_ADDR;
+assign b_GFX0SCR0_ADDR = v_GFX0SCR0_ADDR;
+assign b_GFX1SCR0_ADDR = v_GFX1SCR0_ADDR;
+assign b_GFX0SCR1_ADDR = v_GFX0SCR1_ADDR;
+assign b_GFX1SCR1_ADDR = v_GFX1SCR1_ADDR;
+assign b_GFX0SCR2_ADDR = v_GFX0SCR2_ADDR;
+assign b_GFX1SCR2_ADDR = v_GFX1SCR2_ADDR;
+
+wire [10:0] v_PALRAM_ADDR;
+wire [13:0] v_TEXTROM_ADDR;
+wire [11:0] v_TEXTVRAM_ADDR;
+wire [7:0] v_TEXTSELECT_ADDR, v_TEXTSCROLL_ADDR;
+assign g_PALRAM_ADDR = v_PALRAM_ADDR;
+assign b_PALRAM_ADDR = v_PALRAM_ADDR;
+assign g_TEXTROM_ADDR = v_TEXTROM_ADDR;
+assign b_TEXTROM_ADDR = v_TEXTROM_ADDR;
+assign g_TEXTVRAM_ADDR = v_TEXTVRAM_ADDR;
+assign b_TEXTVRAM_ADDR = v_TEXTVRAM_ADDR;
+assign g_TEXTSELECT_ADDR = v_TEXTSELECT_ADDR;
+assign b_TEXTSELECT_ADDR = v_TEXTSELECT_ADDR;
+assign g_TEXTSCROLL_ADDR = v_TEXTSCROLL_ADDR;
+assign b_TEXTSCROLL_ADDR = v_TEXTSCROLL_ADDR;
+
+TVRMCTL7 #(.SS_ENABLE(SS_ENABLE)) u_textvramctl (
     .CLK(CLK),
     .RESET(RESET | !active_is_battle),
     .CLK96(CLK96),
@@ -541,54 +594,66 @@ TVRMCTL7 u_textvramctl (
     .PALRAM_ADDR(b_PALRAM_ADDR),
     .PALRAM_DATA(b_PALRAM_DATA),
     .TEXTGFXRAM_ADDR(TEXTGFXRAM_ADDR),
-    .TEXTGFXRAM_DATA(TEXTGFXRAM_DATA)
+    .TEXTGFXRAM_DATA(TEXTGFXRAM_DATA),
+    .SS_FREEZE(SS_FREEZE),
+    .SS_DATA(SS_DATA),
+    .SS_ADDR(SS_ADDR),
+    .SS_SELECT(ss_text_select),
+    .SS_WRITE(SS_WRITE),
+    .SS_READ(SS_READ),
+    .SS_QUERY(SS_QUERY),
+    .SS_DATA_OUT(ss_text_data_out),
+    .SS_ACK(ss_text_ack),
+    .SS_QUIESCED(ss_text_quiesced)
 );
 
-raizing_video u_battle_video(
+raizing_video #(.SS_ENABLE(SS_ENABLE)) u_video(
     .CLK(CLK),
     .CLK96(CLK96),
     .PIXEL_CEN(CEN675),
-    .RESET(RESET | !active_is_battle),
-    .RESET96(RESET96 | !active_is_battle),
-    .PALRAM_ADDR(b_PALRAM_ADDR),
-    .PALRAM_DATA(b_PALRAM_DATA),
-    .TEXTROM_ADDR(b_TEXTROM_ADDR),
-    .TEXTROM_DATA(b_TEXTROM_DATA),
-    .TEXTVRAM_ADDR(b_TEXTVRAM_ADDR),
-    .TEXTVRAM_DATA(b_TEXTVRAM_DATA),
-    .TEXTSELECT_ADDR(b_TEXTSELECT_ADDR),
-    .TEXTSELECT_DATA(b_TEXTSELECT_DATA),
-    .TEXTSCROLL_ADDR(b_TEXTSCROLL_ADDR),
-    .TEXTSCROLL_DATA(b_TEXTSCROLL_DATA),
-    .GFX_CS(b_GFX_CS),
-    .GFX_OK(b_GFX_OK),
-    .GFX0_ADDR(b_GFX0_ADDR),
-    .GFX0_DOUT(b_GFX0_DOUT),
-    .GFX1_ADDR(b_GFX1_ADDR),
+    .RESET(RESET),
+    .RESET96(RESET96),
+    .PALRAM_ADDR(v_PALRAM_ADDR),
+    .PALRAM_DATA(active_is_garegga ? g_PALRAM_DATA : b_PALRAM_DATA),
+    .TEXTROM_ADDR(v_TEXTROM_ADDR),
+    .TEXTROM_DATA(active_is_garegga ? g_TEXTROM_DATA : b_TEXTROM_DATA),
+    .TEXTVRAM_ADDR(v_TEXTVRAM_ADDR),
+    .TEXTVRAM_DATA(active_is_garegga ? g_TEXTVRAM_DATA : b_TEXTVRAM_DATA),
+    .TEXTSELECT_ADDR(v_TEXTSELECT_ADDR),
+    .TEXTSELECT_DATA(active_is_garegga ? g_TEXTSELECT_DATA : b_TEXTSELECT_DATA),
+    .TEXTSCROLL_ADDR(v_TEXTSCROLL_ADDR),
+    .TEXTSCROLL_DATA(active_is_garegga ? g_TEXTSCROLL_DATA : b_TEXTSCROLL_DATA),
+    .SHIFT_SPRITE_PRI(GAME_ID == RAIZING_SSTRIKER),
+    .FAST_OBJ_QUEUE(GAME_ID == RAIZING_GAREGGA),
+    .GFX_CS(v_GFX_CS),
+    .GFX_OK(v_GFX_OK),
+    .GFX0_ADDR(v_GFX0_ADDR),
+    .GFX0_DOUT(v_GFX0_DOUT),
+    .GFX1_ADDR(v_GFX1_ADDR),
     .GFX1_DOUT(b_GFX1_DOUT),
-    .GFXSCR0_CS(b_GFXSCR0_CS),
-    .GFXSCR0_OK(b_GFXSCR0_OK),
-    .GFX0SCR0_ADDR(b_GFX0SCR0_ADDR),
-    .GFX0SCR0_DOUT(b_GFX0SCR0_DOUT),
-    .GFX1SCR0_ADDR(b_GFX1SCR0_ADDR),
+    .GFXSCR0_CS(v_GFXSCR0_CS),
+    .GFXSCR0_OK(v_GFXSCR0_OK),
+    .GFX0SCR0_ADDR(v_GFX0SCR0_ADDR),
+    .GFX0SCR0_DOUT(v_GFX0SCR0_DOUT),
+    .GFX1SCR0_ADDR(v_GFX1SCR0_ADDR),
     .GFX1SCR0_DOUT(b_GFX1SCR0_DOUT),
-    .GFXSCR1_CS(b_GFXSCR1_CS),
-    .GFXSCR1_OK(b_GFXSCR1_OK),
-    .GFX0SCR1_ADDR(b_GFX0SCR1_ADDR),
-    .GFX0SCR1_DOUT(b_GFX0SCR1_DOUT),
-    .GFX1SCR1_ADDR(b_GFX1SCR1_ADDR),
+    .GFXSCR1_CS(v_GFXSCR1_CS),
+    .GFXSCR1_OK(v_GFXSCR1_OK),
+    .GFX0SCR1_ADDR(v_GFX0SCR1_ADDR),
+    .GFX0SCR1_DOUT(v_GFX0SCR1_DOUT),
+    .GFX1SCR1_ADDR(v_GFX1SCR1_ADDR),
     .GFX1SCR1_DOUT(b_GFX1SCR1_DOUT),
-    .GFXSCR2_CS(b_GFXSCR2_CS),
-    .GFXSCR2_OK(b_GFXSCR2_OK),
-    .GFX0SCR2_ADDR(b_GFX0SCR2_ADDR),
-    .GFX0SCR2_DOUT(b_GFX0SCR2_DOUT),
-    .GFX1SCR2_ADDR(b_GFX1SCR2_ADDR),
+    .GFXSCR2_CS(v_GFXSCR2_CS),
+    .GFXSCR2_OK(v_GFXSCR2_OK),
+    .GFX0SCR2_ADDR(v_GFX0SCR2_ADDR),
+    .GFX0SCR2_DOUT(v_GFX0SCR2_DOUT),
+    .GFX1SCR2_ADDR(v_GFX1SCR2_ADDR),
     .GFX1SCR2_DOUT(b_GFX1SCR2_DOUT),
-    .GP9001CS(GP9001CS & active_is_battle),
-    .GP9001ACK(b_GP9001ACK),
-    .VINT(b_VINT),
+    .GP9001CS(GP9001CS),
+    .GP9001ACK(GP9001ACK),
+    .VINT(VINT),
     .GP9001DIN(CPU_DOUT),
-    .GP9001DOUT(b_GCU_DOUT),
+    .GP9001DOUT(GCU_DOUT),
     .GP9001_OP_SELECT_REG(GP9001_OP_SELECT_REG),
     .GP9001_OP_WRITE_REG(GP9001_OP_WRITE_REG),
     .GP9001_OP_WRITE_RAM(GP9001_OP_WRITE_RAM),
@@ -598,50 +663,36 @@ raizing_video u_battle_video(
     .GP9001_OP_OBJECTBANK_WR(GP9001_OP_OBJECTBANK_WR),
     .GP9001_OBJECTBANK_SLOT(GP9001_OBJECTBANK_SLOT),
     .GP9001OUT(GP9001OUT),
-    .LVBL_DLY(b_LVBL),
-    .LHBL_DLY(b_LHBL),
-    .LVBL(b_LVBLL),
-    .LHBL(b_LHBLL),
-    .HS(b_HS),
-    .VS(b_VS),
-    .CPU_HSYNC(b_HSYNC),
-    .CPU_VSYNC(b_VSYNC),
-    .CPU_FBLANK(b_FBLANK),
-    .V(b_V),
-    .RED(b_red),
-    .GREEN(b_green),
-    .BLUE(b_blue),
-    .HS_START(9'd0),
-    .HS_END(9'd0),
-    .VS_START(9'd0),
-    .VS_END(9'd0),
-    .FLIP(b_FLIP)
+    .LVBL_DLY(LVBL),
+    .LHBL_DLY(LHBL),
+    .LVBL(CPU_LVBLL),
+    .LHBL(),
+    .HS(HS),
+    .VS(VS),
+    .CPU_HSYNC(HSYNC),
+    .CPU_VSYNC(VSYNC),
+    .CPU_FBLANK(FBLANK),
+    .V(CPU_V),
+    .RED(red),
+    .GREEN(green),
+    .BLUE(blue),
+    .GAME(GAME_ID),
+    .HS_START(active_is_garegga ? 9'd325 : 9'd0),
+    .HS_END(active_is_garegga ? 9'd380 : 9'd0),
+    .VS_START(active_is_garegga ? 9'd232 : 9'd0),
+    .VS_END(active_is_garegga ? 9'd245 : 9'd0),
+    .FLIP(1'b0),
+    .SS_FREEZE(SS_FREEZE),
+    .SS_DATA(SS_DATA),
+    .SS_ADDR(SS_ADDR),
+    .SS_SELECT(SS_SELECT),
+    .SS_WRITE(SS_WRITE),
+    .SS_READ(SS_READ),
+    .SS_QUERY(SS_QUERY),
+    .SS_DATA_OUT(ss_video_data_out),
+    .SS_ACK(ss_video_ack),
+    .SS_QUIESCED(ss_video_quiesced)
 );
-
-assign GP9001ACK = active_is_garegga ? g_GP9001ACK : b_GP9001ACK;
-assign VINT      = active_is_garegga ? g_VINT      : b_VINT;
-assign GCU_DOUT  = active_is_garegga ? g_GCU_DOUT  : b_GCU_DOUT;
-assign HSYNC     = active_is_garegga ? g_HSYNC     : b_HSYNC;
-assign VSYNC     = active_is_garegga ? g_VSYNC     : b_VSYNC;
-assign FBLANK    = active_is_garegga ? g_FBLANK    : b_FBLANK;
-assign CPU_LVBLL = active_is_garegga ? g_LVBLL     : b_LVBLL;
-assign CPU_V     = active_is_garegga ? g_V         : b_V;
-
-wire [7:0] video_red   = active_is_garegga ? g_red   : b_red;
-wire [7:0] video_green = active_is_garegga ? g_green : b_green;
-wire [7:0] video_blue  = active_is_garegga ? g_blue  : b_blue;
-wire video_LHBL = active_is_garegga ? g_LHBL : b_LHBL;
-wire video_LVBL = active_is_garegga ? g_LVBL : b_LVBL;
-wire video_HS   = active_is_garegga ? g_HS   : b_HS;
-wire video_VS   = active_is_garegga ? g_VS   : b_VS;
-
-assign red   = video_red;
-assign green = video_green;
-assign blue  = video_blue;
-assign LHBL  = video_LHBL;
-assign LVBL  = video_LVBL;
-assign HS    = video_HS;
-assign VS    = video_VS;
 
 /* sound */
 wire signed [15:0] g_snd_left, g_snd_right, b_snd_left, b_snd_right, k_snd_left, k_snd_right;
@@ -683,7 +734,10 @@ wire signed [15:0] jt_fm_xleft, jt_fm_xright;
 wire signed [13:0] jt_oki0_sound, jt_oki1_sound;
 wire [17:0] jt_oki0_rom_addr, jt_oki1_rom_addr;
 
-garegga_sound #(.EXTERNAL_CHIPS(1)) u_garegga_sound(
+garegga_sound #(
+    .EXTERNAL_CHIPS(1),
+    .SS_ENABLE(SS_ENABLE)
+) u_garegga_sound(
     .CLK(CLK),
     .CLK96(CLK96),
     .RESET(RESET | !active_is_garegga),
@@ -740,10 +794,25 @@ garegga_sound #(.EXTERNAL_CHIPS(1)) u_garegga_sound(
     .OKI0_ROM_DATA_OUT(g_oki0_rom_data_out),
     .OKI0_ROM_OK_OUT(g_oki0_rom_ok_out),
     .OKI0_SOUND_IN(jt_oki0_sound),
-    .OKI0_SAMPLE_IN(jt_oki0_sample)
+    .OKI0_SAMPLE_IN(jt_oki0_sample),
+    .SS_ACTIVE(SS_ACTIVE && active_is_garegga),
+    .SS_FREEZE(SS_FREEZE),
+    .SS_RESTORE_BEGIN(SS_RESTORE_BEGIN),
+    .SS_DATA(SS_DATA),
+    .SS_ADDR(SS_ADDR),
+    .SS_SELECT(SS_SELECT),
+    .SS_WRITE(SS_WRITE),
+    .SS_READ(SS_READ),
+    .SS_QUERY(SS_QUERY),
+    .SS_DATA_OUT(ss_garegga_sound_data_out),
+    .SS_ACK(ss_garegga_sound_ack),
+    .SS_QUIESCED(ss_garegga_sound_quiesced)
 );
 
-batrider_sound #(.EXTERNAL_CHIPS(1)) u_batrider_sound(
+batrider_sound #(
+    .EXTERNAL_CHIPS(1),
+    .SS_ENABLE(SS_ENABLE)
+) u_batrider_sound(
     .CLK(CLK),
     .CLK96(CLK96),
     .RESET(RESET | !active_is_batrider),
@@ -809,15 +878,33 @@ batrider_sound #(.EXTERNAL_CHIPS(1)) u_batrider_sound(
     .OKI1_ROM_DATA_OUT(b_oki1_rom_data_out),
     .OKI1_ROM_OK_OUT(b_oki1_rom_ok_out),
     .OKI1_SOUND_IN(jt_oki1_sound),
-    .OKI1_SAMPLE_IN(jt_oki1_sample)
+    .OKI1_SAMPLE_IN(jt_oki1_sample),
+    .SS_ACTIVE(SS_ACTIVE && active_is_batrider),
+    .SS_FREEZE(SS_FREEZE),
+    .SS_RESTORE_BEGIN(SS_RESTORE_BEGIN),
+    .SS_DATA(SS_DATA),
+    .SS_ADDR(SS_ADDR),
+    .SS_SELECT(SS_SELECT),
+    .SS_WRITE(SS_WRITE),
+    .SS_READ(SS_READ),
+    .SS_QUERY(SS_QUERY),
+    .SS_DATA_OUT(ss_batrider_sound_data_out),
+    .SS_ACK(ss_batrider_sound_ack),
+    .SS_QUIESCED(ss_batrider_sound_quiesced)
 );
 
-raizing_shared_jt_audio u_shared_jt_audio(
+raizing_shared_jt_audio #(.SS_ENABLE(SS_ENABLE)) u_shared_jt_audio(
     .CLK96(CLK96),
     .RESET96(RESET96),
     .ACTIVE(active_is_garegga | active_is_batrider),
     .FM_CEN(active_is_garegga ? g_fm_cen_out : b_fm_cen_out),
     .FM_CEN_P1(active_is_garegga ? g_fm_cen_p1_out : b_fm_cen_p1_out),
+    .FM_REPLAY_CEN(active_is_garegga ?
+        ((GAME_ID == RAIZING_SSTRIKER || GAME_ID == RAIZING_KINGDMGP) ?
+            g_CEN3p375 : g_CEN4) : b_CEN4),
+    .FM_REPLAY_CEN_P1(active_is_garegga ?
+        ((GAME_ID == RAIZING_SSTRIKER || GAME_ID == RAIZING_KINGDMGP) ?
+            g_CEN1p6875 : g_CEN2) : b_CEN2),
     .FM_CS_N(active_is_garegga ? g_fm_cs_n_out : b_fm_cs_n_out),
     .FM_WR_N(active_is_garegga ? g_fm_wr_n_out : b_fm_wr_n_out),
     .FM_A0(active_is_garegga ? g_fm_a0_out : b_fm_a0_out),
@@ -846,10 +933,20 @@ raizing_shared_jt_audio u_shared_jt_audio(
     .OKI1_ROM_DATA(active_is_batrider ? b_oki1_rom_data_out : 8'd0),
     .OKI1_ROM_OK(active_is_batrider ? b_oki1_rom_ok_out : 1'b0),
     .OKI1_SOUND(jt_oki1_sound),
-    .OKI1_SAMPLE(jt_oki1_sample)
+    .OKI1_SAMPLE(jt_oki1_sample),
+    .SS_RESTORE_BEGIN(SS_RESTORE_BEGIN),
+    .SS_DATA(SS_DATA),
+    .SS_ADDR(SS_ADDR),
+    .SS_SELECT(SS_SELECT),
+    .SS_WRITE(SS_WRITE),
+    .SS_READ(SS_READ),
+    .SS_QUERY(SS_QUERY),
+    .SS_DATA_OUT(ss_shared_audio_data_out),
+    .SS_ACK(ss_shared_audio_ack),
+    .SS_REPLAY_BUSY(ss_shared_audio_replay_busy)
 );
 
-bakraid_sound u_bakraid_sound(
+bakraid_sound #(.SS_ENABLE(SS_ENABLE)) u_bakraid_sound(
     .CLK(CLK),
     .CLK96(CLK96),
     .RESET(RESET | !active_is_bakraid),
@@ -886,7 +983,20 @@ bakraid_sound u_bakraid_sound(
     .right(k_snd_right),
     .sample(k_sample),
     .peak(k_snd_peak),
-    .FX_LEVEL(dip_fxlevel)
+    .FX_LEVEL(dip_fxlevel),
+    .SS_ACTIVE(SS_ACTIVE && active_is_bakraid),
+    .SS_FREEZE(SS_FREEZE),
+    .SS_RESTORE_BEGIN(SS_RESTORE_BEGIN),
+    .SS_DATA(SS_DATA),
+    .SS_ADDR(SS_ADDR),
+    .SS_SELECT(SS_SELECT),
+    .SS_WRITE(SS_WRITE),
+    .SS_READ(SS_READ),
+    .SS_QUERY(SS_QUERY),
+    .SS_DATA_OUT(ss_bakraid_sound_data_out),
+    .SS_ACK(ss_bakraid_sound_ack),
+    .SS_QUIESCED(ss_bakraid_sound_quiesced),
+    .SS_REPLAY_BUSY(ss_bakraid_audio_replay_busy)
 );
 
 assign snd_left  = active_is_garegga ? g_snd_left  : active_is_bakraid ? k_snd_left  : b_snd_left;
@@ -963,7 +1073,7 @@ assign prog_ba    = target_is_garegga ? g_prog_ba    : target_is_bakraid ? k_pro
 assign prog_we    = target_is_garegga ? g_prog_we    : target_is_bakraid ? k_prog_we    : target_is_batrider ? b_prog_we    : 1'b0;
 assign prog_rd    = target_is_garegga ? g_prog_rd    : target_is_bakraid ? k_prog_rd    : target_is_batrider ? b_prog_rd    : 1'b0;
 
-garegga_sdram u_garegga_sdram (
+garegga_sdram #(.SS_ENABLE(SS_ENABLE)) u_garegga_sdram (
     .RESET(RESET96 | !active_is_garegga),
     .CLK(CLK96),
     .RESET48(RESET | !active_is_garegga),
@@ -1031,10 +1141,20 @@ garegga_sdram u_garegga_sdram (
     .HISCORE_WE(HISCORE_WE),
     .HISCORE_DIN(HISCORE_DIN),
     .HISCORE_DOUT(g_HISCORE_DOUT),
-    .HISCORE_ADDR(HISCORE_ADDR[6:0])
+    .HISCORE_ADDR(HISCORE_ADDR[6:0]),
+    .SS_FREEZE(SS_FREEZE),
+    .SS_DATA(SS_DATA),
+    .SS_ADDR(SS_ADDR),
+    .SS_SELECT(ss_garegga_storage_select),
+    .SS_WRITE(SS_WRITE),
+    .SS_READ(SS_READ),
+    .SS_QUERY(SS_QUERY),
+    .SS_DATA_OUT(ss_garegga_storage_data_out),
+    .SS_ACK(ss_garegga_storage_ack),
+    .SS_QUIESCED(ss_garegga_storage_quiesced)
 );
 
-batrider_sdram u_batrider_sdram (
+batrider_sdram #(.SS_ENABLE(SS_ENABLE)) u_batrider_sdram (
     .RESET(RESET96 | !active_is_batrider),
     .CLK(CLK96),
     .CLK_GFX(CEN675),
@@ -1114,10 +1234,20 @@ batrider_sdram u_batrider_sdram (
     .HISCORE_WE(HISCORE_WE),
     .HISCORE_DIN(HISCORE_DIN),
     .HISCORE_DOUT(b_HISCORE_DOUT),
-    .HISCORE_ADDR(HISCORE_ADDR)
+    .HISCORE_ADDR(HISCORE_ADDR),
+    .SS_FREEZE(SS_FREEZE),
+    .SS_DATA(SS_DATA),
+    .SS_ADDR(SS_ADDR),
+    .SS_SELECT(ss_batrider_storage_select),
+    .SS_WRITE(SS_WRITE),
+    .SS_READ(SS_READ),
+    .SS_QUERY(SS_QUERY),
+    .SS_DATA_OUT(ss_batrider_storage_data_out),
+    .SS_ACK(ss_batrider_storage_ack),
+    .SS_QUIESCED(ss_batrider_storage_quiesced)
 );
 
-bakraid_sdram u_bakraid_sdram (
+bakraid_sdram #(.SS_ENABLE(SS_ENABLE)) u_bakraid_sdram (
     .RESET(RESET96 | !active_is_bakraid),
     .CLK(CLK96),
     .RESET48(RESET | !active_is_bakraid),
@@ -1201,7 +1331,86 @@ bakraid_sdram u_bakraid_sdram (
     .SCLK(EEPROM_SCLK),
     .SDI(EEPROM_SDI),
     .SDO(EEPROM_SDO),
-    .SCS(EEPROM_SCS)
+    .SCS(EEPROM_SCS),
+    .SS_FREEZE(SS_FREEZE),
+    .SS_DATA(SS_DATA),
+    .SS_ADDR(SS_ADDR),
+    .SS_SELECT(ss_bakraid_storage_select),
+    .SS_WRITE(SS_WRITE),
+    .SS_READ(SS_READ),
+    .SS_QUERY(SS_QUERY),
+    .SS_DATA_OUT(ss_bakraid_storage_data_out),
+    .SS_ACK(ss_bakraid_storage_ack),
+    .SS_QUIESCED(ss_bakraid_storage_quiesced)
 );
+
+wire ss_sound_ack = ss_garegga_sound_ack |
+                    ss_batrider_sound_ack |
+                    ss_bakraid_sound_ack;
+wire [63:0] ss_sound_data =
+    (ss_garegga_sound_data_out & {64{ss_garegga_sound_ack}}) |
+    (ss_batrider_sound_data_out & {64{ss_batrider_sound_ack}}) |
+    (ss_bakraid_sound_data_out & {64{ss_bakraid_sound_ack}});
+wire ss_storage_ack = ss_garegga_storage_ack |
+                      ss_batrider_storage_ack |
+                      ss_bakraid_storage_ack;
+wire [63:0] ss_storage_data =
+    (ss_garegga_storage_data_out & {64{ss_garegga_storage_ack}}) |
+    (ss_batrider_storage_data_out & {64{ss_batrider_storage_ack}}) |
+    (ss_bakraid_storage_data_out & {64{ss_bakraid_storage_ack}});
+wire ss_sound_quiesced = active_is_garegga ? ss_garegga_sound_quiesced :
+                          active_is_batrider ? ss_batrider_sound_quiesced :
+                                              ss_bakraid_sound_quiesced;
+wire ss_storage_quiesced = active_is_garegga ? ss_garegga_storage_quiesced :
+                            active_is_batrider ? ss_batrider_storage_quiesced :
+                                                ss_bakraid_storage_quiesced;
+wire [5:0] ss_response_ack;
+
+assign ss_response_ack[0] = ss_cpu_ack;
+assign ss_response_ack[1] = ss_sound_ack;
+assign ss_response_ack[2] = ss_shared_audio_ack;
+assign ss_response_ack[3] = ss_video_ack;
+assign ss_response_ack[4] = ss_text_ack;
+assign ss_response_ack[5] = ss_storage_ack;
+
+raizing_ss_response_mux #(.COUNT(6)) u_ss_response(
+    .ack(ss_response_ack),
+    .data({ss_storage_data,
+           ss_text_data_out,
+           ss_video_data_out,
+           ss_shared_audio_data_out,
+           ss_sound_data,
+           ss_cpu_data_out}),
+    .ack_out(SS_ACK),
+    .data_out(SS_DATA_OUT)
+);
+
+wire ss_audio_replay_busy = active_is_bakraid ?
+                            ss_bakraid_audio_replay_busy :
+                            ss_shared_audio_replay_busy;
+reg ss_main_restore_seen;
+
+always @(posedge CLK96) begin
+    SS_RESTORE_DONE <= 1'b0;
+
+    if(RESET96 || !SS_ENABLE || SS_RESTORE_BEGIN) begin
+        ss_main_restore_seen <= 1'b0;
+    end else begin
+        if(ss_main_restore_done)
+            ss_main_restore_seen <= 1'b1;
+
+        if((ss_main_restore_seen || ss_main_restore_done) &&
+           !ss_audio_replay_busy) begin
+            SS_RESTORE_DONE <= 1'b1;
+            ss_main_restore_seen <= 1'b0;
+        end
+    end
+end
+
+assign SS_GAME_QUIESCED = !SS_ENABLE ||
+    (SS_FREEZE && ss_cpu_idle && ss_sound_quiesced &&
+     ss_video_quiesced && (!active_is_battle || ss_text_quiesced) &&
+     ss_storage_quiesced);
+assign SS_CPU_IDLE = !SS_ENABLE || ss_cpu_idle;
 
 endmodule

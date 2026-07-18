@@ -26,7 +26,9 @@ To use:
 - Add a 3-bit (or more) "rgb" output to the top level
 */
 
-module hvsync_generator(clk, clk96, pxl_cen, reset, reset96, hsync, vsync, display_on, hpos, vpos, lhbl, lvbl, vrender, hs_start, hs_end, vs_start, vs_end, flip);
+module hvsync_generator(clk, clk96, pxl_cen, reset, reset96, hsync, vsync, display_on, hpos, vpos, lhbl, lvbl, vrender, hs_start, hs_end, vs_start, vs_end, flip, ss_hold, ss_restore, ss_state_in, ss_state);
+
+  parameter SS_ENABLE = 0;
 
   input clk;
   input clk96;
@@ -34,6 +36,10 @@ module hvsync_generator(clk, clk96, pxl_cen, reset, reset96, hsync, vsync, displ
   input reset;
   input reset96;
   input flip;
+  input ss_hold;
+  input ss_restore;
+  input [43:0] ss_state_in;
+  output [43:0] ss_state;
   output hsync, vsync;
   output display_on;
   output [8:0] hpos;
@@ -51,6 +57,7 @@ module hvsync_generator(clk, clk96, pxl_cen, reset, reset96, hsync, vsync, displ
 
 
 jtframe_vtimer #(
+  .SS_ENABLE(SS_ENABLE),
   .V_START(0),
   .VB_START(239),
   .VB_END(262),
@@ -69,7 +76,11 @@ jtframe_vtimer #(
   .VS(vsync),
   .H(hpos),
   .vdump(vpos),
-  .vrender(vrender_o)
+  .vrender(vrender_o),
+  .ss_hold(ss_hold),
+  .ss_restore(ss_restore),
+  .ss_state_in(ss_state_in),
+  .ss_state(ss_state)
 );
 
 //for gcu register vcount

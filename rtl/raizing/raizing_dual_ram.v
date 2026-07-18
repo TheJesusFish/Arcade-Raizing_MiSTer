@@ -9,7 +9,8 @@ module raizing_dual_ram #(
     parameter SIMFILE_BYTE = 0,
     parameter FULL_DW = 8,
     parameter SYNFILE = "",
-    parameter ASCII_BIN = 0
+    parameter ASCII_BIN = 0,
+    parameter SS_ENABLE = 0
 )(
     input              clk0,
     input  [DW-1:0]   data0,
@@ -21,7 +22,13 @@ module raizing_dual_ram #(
     input  [DW-1:0]   data1,
     input  [AW-1:0]   addr1,
     input              we1,
-    output [DW-1:0]   q1
+    output [DW-1:0]   q1,
+
+    input              ss_active,
+    input  [DW-1:0]   ss_data,
+    input  [AW-1:0]   ss_addr,
+    input              ss_we,
+    output [DW-1:0]   ss_q
 );
 
     reg [DW-1:0] q0_r;
@@ -30,6 +37,11 @@ module raizing_dual_ram #(
 
     assign q0 = q0_r;
     assign q1 = q1_r;
+    assign ss_q = SS_ENABLE ? q1_r : {DW{1'b0}};
+
+    wire [DW-1:0] port1_data = SS_ENABLE && ss_active ? ss_data : data1;
+    wire [AW-1:0] port1_addr = SS_ENABLE && ss_active ? ss_addr : addr1;
+    wire port1_we = SS_ENABLE && ss_active ? ss_we : we1;
 
     always @(posedge clk0) begin
         q0_r <= mem[addr0];
@@ -37,8 +49,8 @@ module raizing_dual_ram #(
     end
 
     always @(posedge clk1) begin
-        q1_r <= mem[addr1];
-        if(we1) mem[addr1] <= data1;
+        q1_r <= mem[port1_addr];
+        if(port1_we) mem[port1_addr] <= port1_data;
     end
 
 `ifdef SIMULATION

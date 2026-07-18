@@ -29,7 +29,8 @@ module bakraid_sdram #(
 			  GP9001_TILE_LEN = 25'h1000000,
 			  PCM6_DATA_LEN = 25'h400000,
 			  PCM7_DATA_LEN = 25'h400000,
-			  PCM8_DATA_LEN = 25'h400000
+			  PCM8_DATA_LEN = 25'h400000,
+              SS_ENABLE = 0
 )(
     input RESET48,
     input CLK48,
@@ -139,7 +140,18 @@ module bakraid_sdram #(
 	input		 SCLK,
 	input		 SDI,
 	output		 SDO,
-	input		 SCS 
+	input		 SCS,
+
+    input          SS_FREEZE,
+    input  [63:0]  SS_DATA,
+    input  [31:0]  SS_ADDR,
+    input   [7:0]  SS_SELECT,
+    input          SS_WRITE,
+    input          SS_READ,
+    input          SS_QUERY,
+    output [63:0]  SS_DATA_OUT,
+    output         SS_ACK,
+    output         SS_QUIESCED
 );
 
 //loader
@@ -449,9 +461,35 @@ raizing_rom_2slots #(
 );
 
 //eeprom
-wire dump_flag; 
+localparam EEPROM_SS_WIDTH = 34 + 9 + 4*8;
+wire dump_flag;
 wire dump_we = IOCTL_WR & IOCTL_RAM;
-jt9346_16b8b #(.DW(8),.AW(9), .CW(9)) u_eeprom(
+wire ss_freeze = SS_ENABLE && SS_FREEZE;
+wire ss_eeprom_ram_active;
+wire [8:0] ss_eeprom_ram_addr;
+wire [7:0] ss_eeprom_ram_data;
+wire ss_eeprom_ram_we;
+wire [7:0] eeprom_dump_dout;
+wire [EEPROM_SS_WIDTH-1:0] ss_eeprom_state;
+wire [EEPROM_SS_WIDTH-1:0] ss_eeprom_restore;
+wire ss_eeprom_restore_we;
+wire [1:0] ss_response_ack;
+wire [127:0] ss_response_data;
+
+wire [8:0] eeprom_dump_addr = ss_eeprom_ram_active ?
+                              ss_eeprom_ram_addr : IOCTL_ADDR[8:0];
+wire [7:0] eeprom_dump_din = ss_eeprom_ram_active ?
+                             ss_eeprom_ram_data : IOCTL_DOUT;
+wire eeprom_dump_we = ss_eeprom_ram_active ? ss_eeprom_ram_we : dump_we;
+
+assign IOCTL_DIN = eeprom_dump_dout;
+
+jt9346_16b8b #(
+    .DW(8),
+    .AW(9),
+    .CW(9),
+    .SS_ENABLE(SS_ENABLE)
+) u_eeprom(
     .rst        ( RESET       ),  // system reset
     .clk        ( CLK       ),  // system clock
     // chip interface
@@ -461,12 +499,66 @@ jt9346_16b8b #(.DW(8),.AW(9), .CW(9)) u_eeprom(
     .scs        ( SCS       ),  // chip select, active high. Goes low in between instructions
     // Dump access
     .dump_clk   ( CLK       ),  // same as prom_we module
-    .dump_addr  ( IOCTL_ADDR[8:0] ),
-    .dump_we    ( dump_we   ),
-    .dump_din   ( IOCTL_DOUT),
-    .dump_dout  ( IOCTL_DIN ),
+    .dump_addr  ( eeprom_dump_addr ),
+    .dump_we    ( eeprom_dump_we ),
+    .dump_din   ( eeprom_dump_din ),
+    .dump_dout  ( eeprom_dump_dout ),
     .dump_flag  ( dump_flag ),
-    .dump_clr   ( IOCTL_RAM )
+    .dump_clr   ( IOCTL_RAM ),
+    .ss_hold    ( ss_freeze ),
+    .ss_restore ( ss_eeprom_restore_we ),
+    .ss_state_in( ss_eeprom_restore ),
+    .ss_state   ( ss_eeprom_state )
 );
+
+raizing_ss_wide_register #(
+    .WIDTH(EEPROM_SS_WIDTH),
+    .SS_INDEX(36)
+) u_ss_eeprom_control(
+    .clk(CLK),
+    .reset(RESET),
+    .capture_data(ss_eeprom_state),
+    .restore_data(ss_eeprom_restore),
+    .restore_we(ss_eeprom_restore_we),
+    .ss_data(SS_DATA),
+    .ss_addr(SS_ADDR),
+    .ss_select(SS_SELECT),
+    .ss_write(SS_WRITE),
+    .ss_read(SS_READ),
+    .ss_query(SS_QUERY),
+    .ss_data_out(ss_response_data[0*64 +: 64]),
+    .ss_ack(ss_response_ack[0])
+);
+
+raizing_ss_ram_adapter #(
+    .WIDTH(8),
+    .ADDR_WIDTH(9),
+    .SS_INDEX(37)
+) u_ss_eeprom_ram(
+    .clk(CLK),
+    .reset(RESET),
+    .ss_data(SS_DATA),
+    .ss_addr(SS_ADDR),
+    .ss_select(SS_SELECT),
+    .ss_write(SS_WRITE),
+    .ss_read(SS_READ),
+    .ss_query(SS_QUERY),
+    .ss_data_out(ss_response_data[1*64 +: 64]),
+    .ss_ack(ss_response_ack[1]),
+    .ram_active(ss_eeprom_ram_active),
+    .ram_addr(ss_eeprom_ram_addr),
+    .ram_data(ss_eeprom_ram_data),
+    .ram_we(ss_eeprom_ram_we),
+    .ram_q(eeprom_dump_dout)
+);
+
+raizing_ss_response_mux #(.COUNT(2)) u_ss_response(
+    .ack(ss_response_ack),
+    .data(ss_response_data),
+    .ack_out(SS_ACK),
+    .data_out(SS_DATA_OUT)
+);
+
+assign SS_QUIESCED = !SS_ENABLE || ss_freeze;
 
 endmodule

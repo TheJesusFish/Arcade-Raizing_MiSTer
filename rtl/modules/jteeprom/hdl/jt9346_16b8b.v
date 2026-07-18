@@ -22,7 +22,8 @@ module jt9346_16b8b #(
     parameter
     AW=6,   // Memory address bits
     CW=AW,  // bits between the 2-bit op command and the data
-    DW=8
+    DW=8,
+    SS_ENABLE=0
 ) (
     input           rst,        // system reset
     input           clk,        // system clock
@@ -39,7 +40,11 @@ module jt9346_16b8b #(
     output    [7:0] dump_dout,
     // NVRAM contents changed
     input           dump_clr,   // Clear the flag
-    output          dump_flag   // There was a write
+    output          dump_flag,  // There was a write
+    input           ss_hold,
+    input           ss_restore,
+    input  [34+CW+4*DW-1:0] ss_state_in,
+    output [34+CW+4*DW-1:0] ss_state
 );
 
     wire [AW-1:0] dx_addr;
@@ -75,7 +80,12 @@ module jt9346_16b8b #(
         end
     endgenerate
 
-    jt9346 #(.AW(AW),.DW(DW),.CW(CW)) u_jt9346 (
+    jt9346 #(
+        .AW(AW),
+        .DW(DW),
+        .CW(CW),
+        .SS_ENABLE(SS_ENABLE)
+    ) u_jt9346 (
         .rst        ( rst       ),        // system reset
         .clk        ( clk       ),        // system clock
         // chip interface
@@ -91,7 +101,11 @@ module jt9346_16b8b #(
         .dump_dout  ( dx_dout   ),
         // NVRAM contents changed
         .dump_clr   ( dump_clr  ),   // Clear the flag
-        .dump_flag  ( dump_flag )   // There was a write
+        .dump_flag  ( dump_flag ),  // There was a write
+        .ss_hold    ( ss_hold ),
+        .ss_restore ( ss_restore ),
+        .ss_state_in( ss_state_in ),
+        .ss_state   ( ss_state )
     );
 
 endmodule

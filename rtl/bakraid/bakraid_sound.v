@@ -22,7 +22,9 @@
 * You should have received a copy of the GNU General Public License
 * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-module bakraid_sound (
+module bakraid_sound #(
+    parameter SS_ENABLE = 0
+)(
     input                CLK,
     input                CLK96,
     input                Z80_CEN,
@@ -61,7 +63,21 @@ module bakraid_sound (
     input          [7:0] SOUNDLATCH2,
     input          [1:0] FX_LEVEL,
     output reg     [1:0] SOUNDLATCH_ACK,
-    input          [1:0] SOUNDLATCH_ACK_INCOMING
+    input          [1:0] SOUNDLATCH_ACK_INCOMING,
+
+    input                SS_ACTIVE,
+    input                SS_FREEZE,
+    input                SS_RESTORE_BEGIN,
+    input         [63:0] SS_DATA,
+    input         [31:0] SS_ADDR,
+    input          [7:0] SS_SELECT,
+    input                SS_WRITE,
+    input                SS_READ,
+    input                SS_QUERY,
+    output        [63:0] SS_DATA_OUT,
+    output               SS_ACK,
+    output               SS_QUIESCED,
+    output               SS_REPLAY_BUSY
 );
 //clock freq/88200 -1
 `define YMZ280B_SAMPLE_RATE ((47250000/88200)-1)
@@ -81,15 +97,42 @@ wire peak_l;
 wire peak_r = peak_l;
 assign right = left;
 
+wire ss_cpu_hold;
+wire ss_cpu_quiesced;
+wire ss_cpu_restore;
+wire ss_cpu_restore_done;
+wire ss_quiesced_sync;
+wire [228:0] ss_cpu_state;
+wire [228:0] ss_cpu_state_in;
+wire [7:0] ss_wait_state;
+wire [7:0] ss_wait_state_in;
+wire ss_sound_frozen = SS_ENABLE && SS_ACTIVE && ss_cpu_quiesced;
+wire [7:0] ss_select_active = SS_ENABLE && SS_ACTIVE ? SS_SELECT : 8'hff;
+wire [1:0] ss_nmi_state, ss_wait_ff_state;
+wire [191:0] ss_control_restore;
+wire ss_control_restore_we;
+reg [191:0] ss_control_capture;
+wire ss_ram_active;
+wire [13:0] ss_ram_addr;
+wire [7:0] ss_ram_data;
+wire ss_ram_we;
+wire [7:0] ss_ram_q;
+wire [3:0] ss_response_ack;
+wire [255:0] ss_response_data;
+
 //clock divider for sound irq
-integer c = 0, cen444 = 'd12000;
-wire c_over = c==(cen444-1);
+localparam [13:0] CEN444 = 14'd12000;
+reg [13:0] c = 14'd0;
+wire c_over = c == CEN444 - 1'b1;
 
 always @(posedge CLK, posedge RESET) begin
     if(RESET) begin
         int_n <= 1;
         c <= 0;
-    end else if(Z80_CEN) begin 
+    end else if(ss_control_restore_we) begin
+        int_n <= ss_control_restore[0];
+        c <= ss_control_restore[14:1];
+    end else if(!ss_sound_frozen && Z80_CEN) begin
         c <= c_over ? 0 : (c+1);
         if(!iorq_n && !m1_n) int_n <= 1;
         else if(c_over) int_n<=0;
@@ -109,7 +152,10 @@ wire [7:0] fx_mult = FX_LEVEL == 2 ? 8'h10 :
                      FX_LEVEL == 0 ? 8'h08 :
                      8'h10; 
 always @(posedge CLK) begin
-    peak <= peak_l | peak_r;
+    if(ss_control_restore_we)
+        peak <= ss_control_restore[15];
+    else if(!ss_sound_frozen)
+        peak <= peak_l | peak_r;
 end
 
 jtframe_mixer #(.W0(16), .W1(16), .WOUT(16)) u_mix_left(
@@ -190,7 +236,23 @@ always @(posedge CLK, posedge RESET) begin
         ymz_cpu_rd <= 0;
         ymz_cpu_addr <= 0;
         ymz_cpu_din <= 0;
-    end else begin
+    end else if(ss_control_restore_we) begin
+        ROMZ80_CS <= ss_control_restore[16];
+        ram_cs <= ss_control_restore[17];
+        ymz_addr_wr_d <= ss_control_restore[18];
+        ymz_data_wr_d <= ss_control_restore[19];
+        ymz_rd_d <= ss_control_restore[20];
+        ymz_cpu_wr <= ss_control_restore[21];
+        ymz_cpu_rd <= ss_control_restore[22];
+        ymz_cpu_addr <= ss_control_restore[23];
+        ymz_cpu_din <= ss_control_restore[31:24];
+        soundlatch3_wr <= ss_control_restore[32];
+        soundlatch4_wr <= ss_control_restore[33];
+        batrider_sndirq_w <= ss_control_restore[34];
+        batrider_clear_nmi_w <= ss_control_restore[35];
+        soundlatch_rd <= ss_control_restore[36];
+        soundlatch2_rd <= ss_control_restore[37];
+    end else if(!ss_sound_frozen) begin
         ymz_addr_wr_d <= ymz_addr_wr_raw;
         ymz_data_wr_d <= ymz_data_wr_raw;
         ymz_rd_d <= ymzrd;
@@ -231,7 +293,12 @@ always @(posedge CLK, posedge RESET) begin
     if(RESET) begin
         SOUNDLATCH3 <= 8'h0;
         SOUNDLATCH4 <= 8'h0;
-    end else begin
+    end else if(ss_control_restore_we) begin
+        din <= ss_control_restore[45:38];
+        SOUNDLATCH3 <= ss_control_restore[53:46];
+        SOUNDLATCH4 <= ss_control_restore[61:54];
+        SOUNDLATCH_ACK <= ss_control_restore[63:62];
+    end else if(!ss_sound_frozen) begin
         //to z80
         case(1'b1)
             ROMZ80_CS: din <= ROMZ80_DOUT;
@@ -256,31 +323,42 @@ always @(posedge CLK, posedge RESET) begin
     end
 end
 
-jtframe_ff u_nmi_ff(
+raizing_ss_edge_ff u_nmi_ff(
     .clk      ( CLK         ),
-    .rst      ( RESET         ),
+    .reset    ( RESET         ),
+    .hold     ( ss_sound_frozen ),
     .cen      ( 1'b1        ),
     .din      ( 1'b1        ),
     .q        (             ),
     .qn       ( nmi_n       ),
     .set      ( 1'b0        ),    // active high
     .clr      ( batrider_clear_nmi_w ),    // active high
-    .sigedge  ( NMI ) // signal whose edge will trigger the FF
+    .sigedge  ( NMI ), // signal whose edge will trigger the FF
+    .restore_we(ss_cpu_restore),
+    .restore_state(ss_control_restore[65:64]),
+    .capture_state(ss_nmi_state)
 );
 
-jtframe_ff u_m68wait_ff(
+raizing_ss_edge_ff u_m68wait_ff(
     .clk      ( CLK         ),
-    .rst      ( RESET         ),
+    .reset    ( RESET         ),
+    .hold     ( ss_sound_frozen ),
     .cen      ( 1'b1        ),
     .din      ( 1'b1        ),
     .q        ( WAIT            ),
     .qn       (        ),
     .set      ( 1'b0        ),    // active high
     .clr      ( |SOUNDLATCH_ACK ),    // release hold on 68k when all ack finished.
-    .sigedge  ( CS     ) // signal whose edge will trigger the FF
+    .sigedge  ( CS     ), // signal whose edge will trigger the FF
+    .restore_we(ss_cpu_restore),
+    .restore_state(ss_control_restore[67:66]),
+    .capture_state(ss_wait_ff_state)
 );
 
-raizing_t80_sysz80 #(.RAM_AW(14)) u_cpu(
+raizing_t80_sysz80 #(
+    .RAM_AW(14),
+    .SS_ENABLE(SS_ENABLE)
+) u_cpu(
     .rst_n      ( ~RESET    ),
     .clk        ( CLK       ),
     .cen        ( Z80_CEN     ), //5.333
@@ -303,8 +381,104 @@ raizing_t80_sysz80 #(.RAM_AW(14)) u_cpu(
     .ram_cs     ( ram_cs      ),
     // manage access to ROM data from SDRAM
     .rom_cs     ( ROMZ80_CS   ),
-    .rom_ok     ( ROMZ80_OK   )
+    .rom_ok     ( ROMZ80_OK   ),
+    .ss_ram_clk ( CLK96       ),
+    .ss_hold    ( ss_cpu_hold ),
+    .ss_quiesced(ss_cpu_quiesced),
+    .ss_restore ( ss_cpu_restore),
+    .ss_restore_done(ss_cpu_restore_done),
+    .ss_state   ( ss_cpu_state),
+    .ss_state_in(ss_cpu_state_in),
+    .ss_wait_state(ss_wait_state),
+    .ss_wait_state_in(ss_wait_state_in),
+    .ss_ram_active(ss_ram_active),
+    .ss_ram_addr(ss_ram_addr),
+    .ss_ram_data(ss_ram_data),
+    .ss_ram_we  (ss_ram_we),
+    .ss_ram_q   (ss_ram_q)
 ); 
+
+raizing_ss_sound_cpu #(
+    .CPU_CLOCK_ASYNC(1),
+    .SS_INDEX(15)
+) u_ss_cpu(
+    .ss_clk(CLK96),
+    .ss_reset(RESET96),
+    .cpu_clk(CLK),
+    .cpu_reset(RESET),
+    .ss_freeze(SS_ENABLE && SS_ACTIVE && SS_FREEZE),
+    .ss_restore_begin(SS_ENABLE && SS_ACTIVE && SS_RESTORE_BEGIN),
+    .cpu_hold(ss_cpu_hold),
+    .cpu_quiesced(ss_cpu_quiesced),
+    .cpu_restore(ss_cpu_restore),
+    .cpu_restore_done(ss_cpu_restore_done),
+    .cpu_state(ss_cpu_state),
+    .cpu_state_in(ss_cpu_state_in),
+    .quiesced(ss_quiesced_sync),
+    .restore_done(),
+    .ss_data(SS_DATA),
+    .ss_addr(SS_ADDR),
+    .ss_select(ss_select_active),
+    .ss_write(SS_WRITE),
+    .ss_read(SS_READ),
+    .ss_query(SS_QUERY),
+    .ss_data_out(ss_response_data[0*64 +: 64]),
+    .ss_ack(ss_response_ack[0])
+);
+
+raizing_ss_ram_adapter #(
+    .WIDTH(8),
+    .ADDR_WIDTH(14),
+    .SS_INDEX(16)
+) u_ss_ram(
+    .clk(CLK96),
+    .reset(RESET96),
+    .ss_data(SS_DATA),
+    .ss_addr(SS_ADDR),
+    .ss_select(ss_select_active),
+    .ss_write(SS_WRITE),
+    .ss_read(SS_READ),
+    .ss_query(SS_QUERY),
+    .ss_data_out(ss_response_data[1*64 +: 64]),
+    .ss_ack(ss_response_ack[1]),
+    .ram_active(ss_ram_active),
+    .ram_addr(ss_ram_addr),
+    .ram_data(ss_ram_data),
+    .ram_we(ss_ram_we),
+    .ram_q(ss_ram_q)
+);
+
+raizing_ss_async_wide_register #(
+    .WIDTH(192),
+    .SS_INDEX(17)
+) u_ss_control(
+    .ss_clk(CLK96),
+    .ss_reset(RESET96),
+    .state_clk(CLK),
+    .state_reset(RESET),
+    .state_quiesced(ss_cpu_quiesced),
+    .capture_data(ss_control_capture),
+    .restore_data(ss_control_restore),
+    .restore_we(ss_control_restore_we),
+    .ss_data(SS_DATA),
+    .ss_addr(SS_ADDR),
+    .ss_select(ss_select_active),
+    .ss_write(SS_WRITE),
+    .ss_read(SS_READ),
+    .ss_query(SS_QUERY),
+    .ss_data_out(ss_response_data[2*64 +: 64]),
+    .ss_ack(ss_response_ack[2])
+);
+
+raizing_ss_response_mux #(.COUNT(4)) u_ss_response(
+    .ack(ss_response_ack),
+    .data(ss_response_data),
+    .ack_out(SS_ACK),
+    .data_out(SS_DATA_OUT)
+);
+
+assign ss_wait_state_in = ss_control_restore[75:68];
+assign SS_QUIESCED = !SS_ENABLE || !SS_ACTIVE || ss_quiesced_sync;
 
 //sdram bank switch rom 7/8 or 6
 wire [23:0] ymz_mem_addr;
@@ -315,6 +489,40 @@ wire signed [15:0] ymz_audio_right = io_audio_bits_right;
 wire audio_valid;
 reg [23:0] ymz_mem_addr_r;
 reg        ymz_io_rd_r;
+
+always @* begin
+    ss_control_capture = 192'd0;
+    ss_control_capture[0] = int_n;
+    ss_control_capture[14:1] = c;
+    ss_control_capture[15] = peak;
+    ss_control_capture[16] = ROMZ80_CS;
+    ss_control_capture[17] = ram_cs;
+    ss_control_capture[18] = ymz_addr_wr_d;
+    ss_control_capture[19] = ymz_data_wr_d;
+    ss_control_capture[20] = ymz_rd_d;
+    ss_control_capture[21] = ymz_cpu_wr;
+    ss_control_capture[22] = ymz_cpu_rd;
+    ss_control_capture[23] = ymz_cpu_addr;
+    ss_control_capture[31:24] = ymz_cpu_din;
+    ss_control_capture[32] = soundlatch3_wr;
+    ss_control_capture[33] = soundlatch4_wr;
+    ss_control_capture[34] = batrider_sndirq_w;
+    ss_control_capture[35] = batrider_clear_nmi_w;
+    ss_control_capture[36] = soundlatch_rd;
+    ss_control_capture[37] = soundlatch2_rd;
+    ss_control_capture[45:38] = din;
+    ss_control_capture[53:46] = SOUNDLATCH3;
+    ss_control_capture[61:54] = SOUNDLATCH4;
+    ss_control_capture[63:62] = SOUNDLATCH_ACK;
+    ss_control_capture[65:64] = ss_nmi_state;
+    ss_control_capture[67:66] = ss_wait_ff_state;
+    ss_control_capture[75:68] = ss_wait_state;
+    ss_control_capture[99:76] = ymz_mem_addr_r;
+    ss_control_capture[100] = ymz_io_rd_r;
+    ss_control_capture[116:101] = fm_left;
+    ss_control_capture[132:117] = fm_right;
+    ss_control_capture[133] = sample;
+end
 
 assign PCM_CS=ymz_mem_addr_r<24'h400000 && ymz_io_rd_r;
 assign PCM1_CS=ymz_mem_addr_r>=24'h400000 && ymz_mem_addr_r<24'h800000 && ymz_io_rd_r;
@@ -338,7 +546,10 @@ always @(posedge CLK, posedge RESET) begin
     if(RESET) begin
         ymz_mem_addr_r <= 24'd0;
         ymz_io_rd_r <= 1'b0;
-    end else begin
+    end else if(ss_control_restore_we) begin
+        ymz_mem_addr_r <= ss_control_restore[99:76];
+        ymz_io_rd_r <= ss_control_restore[100];
+    end else if(!ss_sound_frozen) begin
         ymz_mem_addr_r <= ymz_mem_addr;
         ymz_io_rd_r <= ymz_io_rd;
     end
@@ -349,7 +560,11 @@ always @(posedge CLK) begin
         fm_left <= 16'd0;
         fm_right <= 16'd0;
         sample <= 1'b0;
-    end else begin
+    end else if(ss_control_restore_we) begin
+        fm_left <= ss_control_restore[116:101];
+        fm_right <= ss_control_restore[132:117];
+        sample <= ss_control_restore[133];
+    end else if(!ss_sound_frozen) begin
         if(audio_valid) begin
             fm_left <= ymz_audio_on ? ymz_audio_left : ymz_release(fm_left);
             fm_right <= ymz_audio_on ? ymz_audio_right : ymz_release(fm_right);
@@ -358,9 +573,11 @@ always @(posedge CLK) begin
     end
 end
 
-YMZ280B u_ymz280b (
-    .clock(CLK), //aligned to sdram
+raizing_ss_ymz280b_replay #(.SS_ENABLE(SS_ENABLE)) u_ymz280b(
+    .clock(CLK),
     .reset(RESET),
+    .restore_begin(SS_ACTIVE && SS_RESTORE_BEGIN),
+    .replay_busy(SS_REPLAY_BUSY),
     .io_cpu_rd(ymz_cpu_rd),
     .io_cpu_wr(ymz_cpu_wr),
     .io_cpu_addr(ymz_cpu_addr),
@@ -375,16 +592,16 @@ YMZ280B u_ymz280b (
     .io_audio_valid(audio_valid),
     .io_audio_bits_left(io_audio_bits_left),
     .io_audio_bits_right(io_audio_bits_right),
-    .io_irq(),
-    .io_debug_channels_0_flags_keyOn(ymz_keyon[0]),
-    .io_debug_channels_1_flags_keyOn(ymz_keyon[1]),
-    .io_debug_channels_2_flags_keyOn(ymz_keyon[2]),
-    .io_debug_channels_3_flags_keyOn(ymz_keyon[3]),
-    .io_debug_channels_4_flags_keyOn(ymz_keyon[4]),
-    .io_debug_channels_5_flags_keyOn(ymz_keyon[5]),
-    .io_debug_channels_6_flags_keyOn(ymz_keyon[6]),
-    .io_debug_channels_7_flags_keyOn(ymz_keyon[7]),
-    .io_debug_utilReg_flags_keyOnEnable(ymz_keyon_enable)
+    .keyon(ymz_keyon),
+    .keyon_enable(ymz_keyon_enable),
+    .ss_data(SS_DATA),
+    .ss_addr(SS_ADDR),
+    .ss_select(ss_select_active),
+    .ss_write(SS_WRITE),
+    .ss_read(SS_READ),
+    .ss_query(SS_QUERY),
+    .ss_data_out(ss_response_data[3*64 +: 64]),
+    .ss_ack(ss_response_ack[3])
 );
 
 endmodule

@@ -3,7 +3,8 @@
 
 module raizing_z80wait #(
     parameter DEVCNT = 2,
-    parameter RECOVERY = 1
+    parameter RECOVERY = 1,
+    parameter SS_ENABLE = 0
 )(
     input                  rst_n,
     input                  clk,
@@ -15,7 +16,11 @@ module raizing_z80wait #(
     input                  busak_n,
     input  [DEVCNT-1:0]    dev_busy,
     input                  rom_cs,
-    input                  rom_ok
+    input                  rom_ok,
+    input                  ss_hold,
+    input                  ss_restore,
+    input            [7:0] ss_state_in,
+    output           [7:0] ss_state
 );
 
     reg last_rom_cs;
@@ -29,8 +34,11 @@ module raizing_z80wait #(
     wire dev_hold = |dev_busy;
     wire rec_en = mreq_n && iorq_n && busak_n && (RECOVERY != 0);
     wire rec = (miss_cnt != 4'd0) && !cen_in && rec_en && !cen_l;
+    wire state_hold = SS_ENABLE && ss_hold;
+    wire state_restore = SS_ENABLE && ss_restore;
 
     assign gate = !(rom_bad || dev_hold || locked);
+    assign ss_state = {last_rom_cs, locked, started, cen_l, miss_cnt};
 
     always @* begin
         cen_out = (cen_in && gate) || rec;
@@ -40,7 +48,10 @@ module raizing_z80wait #(
         if(!rst_n) begin
             miss_cnt <= 4'd0;
             cen_l <= 1'b0;
-        end else begin
+        end else if(state_restore) begin
+            cen_l <= ss_state_in[4];
+            miss_cnt <= ss_state_in[3:0];
+        end else if(!state_hold) begin
             cen_l <= cen_out;
 
             if(!started) begin
@@ -59,7 +70,11 @@ module raizing_z80wait #(
             last_rom_cs <= 1'b1;
             locked <= 1'b0;
             started <= 1'b0;
-        end else begin
+        end else if(state_restore) begin
+            last_rom_cs <= ss_state_in[7];
+            locked <= ss_state_in[6];
+            started <= ss_state_in[5];
+        end else if(!state_hold) begin
             last_rom_cs <= rom_cs;
             if(rom_bad) begin
                 locked <= 1'b1;
@@ -73,7 +88,8 @@ module raizing_z80wait #(
 endmodule
 
 module raizing_t80 #(
-    parameter CLR_INT = 0
+    parameter CLR_INT = 0,
+    parameter SS_ENABLE = 0
 )(
     input         rst_n,
     input         clk,
@@ -92,10 +108,31 @@ module raizing_t80 #(
     output        busak_n,
     output [15:0] A,
     input  [7:0]  din,
-    output [7:0]  dout
+    output [7:0]  dout,
+    input         ss_hold,
+    output        ss_quiesced,
+    input         ss_restore,
+    output reg    ss_restore_done,
+    output [228:0] ss_state,
+    input  [228:0] ss_state_in
 );
 
     wire int_n_pin;
+    wire cpu_cen;
+    wire [211:0] state_reg;
+    wire [16:0] state_ext;
+    wire state_boundary;
+
+    assign cpu_cen = cen && !(SS_ENABLE && ss_hold && state_boundary);
+    assign ss_quiesced = SS_ENABLE && ss_hold && state_boundary;
+    assign ss_state = SS_ENABLE ? {state_ext, state_reg} : 229'd0;
+
+    always @(posedge clk) begin
+        if(!rst_n)
+            ss_restore_done <= 1'b0;
+        else
+            ss_restore_done <= SS_ENABLE && ss_restore;
+    end
 
     generate
         if(CLR_INT) begin : gen_latched_int
@@ -121,10 +158,10 @@ module raizing_t80 #(
         end
     endgenerate
 
-    T80s u_cpu (
+    raizing_t80s_ss u_cpu (
         .RESET_n(rst_n),
         .CLK(clk),
-        .CEN(cen),
+        .CEN(cpu_cen),
         .WAIT_n(wait_n),
         .INT_n(int_n_pin),
         .NMI_n(nmi_n),
@@ -140,7 +177,15 @@ module raizing_t80 #(
         .OUT0(1'b0),
         .A(A),
         .DI(din),
-        .DO(dout)
+        .DO(dout),
+        .STATE_REG(state_reg),
+        .STATE_SET(SS_ENABLE && ss_restore),
+        .STATE_DIR(SS_ENABLE ? ss_state_in[211:0] : 212'd0),
+        .STATE_EXT(state_ext),
+        .STATE_EXT_DIR(SS_ENABLE ? ss_state_in[228:212] : 17'd0),
+        .STATE_BOUNDARY(state_boundary),
+        .MC_OUT(),
+        .TS_OUT()
     );
 
 endmodule
@@ -148,7 +193,8 @@ endmodule
 module raizing_t80_devwait #(
     parameter M1_WAIT = 0,
     parameter RECOVERY = 1,
-    parameter CLR_INT = 0
+    parameter CLR_INT = 0,
+    parameter SS_ENABLE = 0
 )(
     input         rst_n,
     input         clk,
@@ -170,7 +216,15 @@ module raizing_t80_devwait #(
     output [7:0]  dout,
     input         rom_cs,
     input         rom_ok,
-    input         dev_busy
+    input         dev_busy,
+    input         ss_hold,
+    output        ss_quiesced,
+    input         ss_restore,
+    output        ss_restore_done,
+    output [228:0] ss_state,
+    input  [228:0] ss_state_in,
+    output   [7:0] ss_wait_state,
+    input    [7:0] ss_wait_state_in
 );
 
     wire wait_n;
@@ -201,7 +255,8 @@ module raizing_t80_devwait #(
 
     raizing_z80wait #(
         .DEVCNT(1),
-        .RECOVERY(RECOVERY)
+        .RECOVERY(RECOVERY),
+        .SS_ENABLE(SS_ENABLE)
     ) u_wait (
         .rst_n(rst_n),
         .clk(clk),
@@ -213,11 +268,16 @@ module raizing_t80_devwait #(
         .busak_n(busak_n),
         .dev_busy(dev_busy),
         .rom_cs(rom_cs),
-        .rom_ok(rom_ok)
+        .rom_ok(rom_ok),
+        .ss_hold(ss_hold && ss_quiesced),
+        .ss_restore(ss_restore),
+        .ss_state_in(ss_wait_state_in),
+        .ss_state(ss_wait_state)
     );
 
     raizing_t80 #(
-        .CLR_INT(CLR_INT)
+        .CLR_INT(CLR_INT),
+        .SS_ENABLE(SS_ENABLE)
     ) u_cpu (
         .rst_n(rst_n),
         .clk(clk),
@@ -236,7 +296,13 @@ module raizing_t80_devwait #(
         .busak_n(busak_n),
         .A(A),
         .din(din),
-        .dout(dout)
+        .dout(dout),
+        .ss_hold(ss_hold),
+        .ss_quiesced(ss_quiesced),
+        .ss_restore(ss_restore),
+        .ss_restore_done(ss_restore_done),
+        .ss_state(ss_state),
+        .ss_state_in(ss_state_in)
     );
 
 endmodule
@@ -245,7 +311,8 @@ module raizing_t80_sysz80 #(
     parameter RAM_AW = 12,
     parameter CLR_INT = 0,
     parameter M1_WAIT = 0,
-    parameter RECOVERY = 1
+    parameter RECOVERY = 1,
+    parameter SS_ENABLE = 0
 )(
     input         rst_n,
     input         clk,
@@ -268,32 +335,70 @@ module raizing_t80_sysz80 #(
     output [7:0]  ram_dout,
     input         ram_cs,
     input         rom_cs,
-    input         rom_ok
+    input         rom_ok,
+    input         ss_ram_clk,
+    input         ss_hold,
+    output        ss_quiesced,
+    input         ss_restore,
+    output        ss_restore_done,
+    output [228:0] ss_state,
+    input  [228:0] ss_state_in,
+    output   [7:0] ss_wait_state,
+    input    [7:0] ss_wait_state_in,
+    input         ss_ram_active,
+    input  [RAM_AW-1:0] ss_ram_addr,
+    input  [7:0]  ss_ram_data,
+    input         ss_ram_we,
+    output [7:0]  ss_ram_q
 );
 
     wire ram_we = ram_cs && !wr_n;
 
-    raizing_dual_ram #(
-        .DW(8),
-        .AW(RAM_AW)
-    ) u_ram (
-        .clk0(clk),
-        .data0(cpu_dout),
-        .addr0(A[RAM_AW-1:0]),
-        .we0(ram_we),
-        .q0(ram_dout),
+    generate
+        if(SS_ENABLE) begin : gen_ss_ram
+            raizing_dual_ram #(
+                .DW(8),
+                .AW(RAM_AW)
+            ) u_ram (
+                .clk0(clk),
+                .data0(cpu_dout),
+                .addr0(A[RAM_AW-1:0]),
+                .we0(ram_we),
+                .q0(ram_dout),
 
-        .clk1(clk),
-        .data1(8'd0),
-        .addr1({RAM_AW{1'b0}}),
-        .we1(1'b0),
-        .q1()
-    );
+                .clk1(ss_ram_clk),
+                .data1(ss_ram_data),
+                .addr1(ss_ram_addr),
+                .we1(ss_ram_active && ss_ram_we),
+                .q1(ss_ram_q)
+            );
+        end else begin : gen_no_ss_ram
+            raizing_dual_ram #(
+                .DW(8),
+                .AW(RAM_AW)
+            ) u_ram (
+                .clk0(clk),
+                .data0(cpu_dout),
+                .addr0(A[RAM_AW-1:0]),
+                .we0(ram_we),
+                .q0(ram_dout),
+
+                .clk1(clk),
+                .data1(8'd0),
+                .addr1({RAM_AW{1'b0}}),
+                .we1(1'b0),
+                .q1()
+            );
+
+            assign ss_ram_q = 8'd0;
+        end
+    endgenerate
 
     raizing_t80_devwait #(
         .M1_WAIT(M1_WAIT),
         .RECOVERY(RECOVERY),
-        .CLR_INT(CLR_INT)
+        .CLR_INT(CLR_INT),
+        .SS_ENABLE(SS_ENABLE)
     ) u_cpu (
         .rst_n(rst_n),
         .clk(clk),
@@ -315,7 +420,15 @@ module raizing_t80_sysz80 #(
         .dout(cpu_dout),
         .rom_cs(rom_cs),
         .rom_ok(rom_ok),
-        .dev_busy(1'b0)
+        .dev_busy(1'b0),
+        .ss_hold(ss_hold),
+        .ss_quiesced(ss_quiesced),
+        .ss_restore(ss_restore),
+        .ss_restore_done(ss_restore_done),
+        .ss_state(ss_state),
+        .ss_state_in(ss_state_in),
+        .ss_wait_state(ss_wait_state),
+        .ss_wait_state_in(ss_wait_state_in)
     );
 
 endmodule

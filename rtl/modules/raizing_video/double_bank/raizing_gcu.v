@@ -1,3 +1,6 @@
+// This file is a Codex-assisted refactoring and update
+// based on the original work of Pramod Somashekar (pram0d)
+
 /*
 * <-- pr4m0d -->
 * https://pram0d.com
@@ -19,7 +22,9 @@
 * You should have received a copy of the GNU General Public License
 * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-module raizing_gcu (
+module raizing_gcu #(
+    parameter SS_ENABLE = 0
+)(
     input              CLK,
     input              CLK96,
     input              GFX_CLK,
@@ -46,6 +51,7 @@ module raizing_gcu (
     input         GP9001_OP_SET_RAM_PTR,
     input         GP9001_OP_OBJECTBANK_WR,
     input [2:0]   GP9001_OBJECTBANK_SLOT,
+    input [7:0]   GAME,
     output        HSYNC,
     output        VSYNC,
     output        FBLANK,
@@ -141,8 +147,50 @@ module raizing_gcu (
     input   [8:0] HS_START,
     input   [8:0] HS_END,
     input   [8:0] VS_START,
-    input   [8:0] VS_END
+    input   [8:0] VS_END,
+
+    input          SS_FREEZE,
+    input  [63:0]  SS_DATA,
+    input  [31:0]  SS_ADDR,
+    input   [7:0]  SS_SELECT,
+    input          SS_WRITE,
+    input          SS_READ,
+    input          SS_QUERY,
+    output [63:0]  SS_DATA_OUT,
+    output         SS_ACK,
+    output         SS_QUIESCED
 );
+
+localparam GAREGGA = 8'h00;
+localparam KINGDMGP = 8'h02;
+localparam SSTRIKER = 8'h01;
+
+wire ss_freeze = SS_ENABLE && SS_FREEZE;
+wire ss_gp_ram_active;
+wire [12:0] ss_gp_ram_addr;
+wire [15:0] ss_gp_ram_data;
+wire ss_gp_ram_we;
+wire [15:0] ss_gp_ram_q;
+wire ss_sprite_ram_active;
+wire [12:0] ss_sprite_ram_addr;
+wire [15:0] ss_sprite_ram_data;
+wire ss_sprite_ram_we;
+wire [15:0] ss_sprite_ram_q;
+wire [15:0] ss_sprite_ram2_q;
+wire [255:0] ss_control_restore;
+wire ss_control_restore_we;
+reg [255:0] ss_control_capture;
+wire [31:0] ss_object_banks;
+wire ss_vint_state;
+wire [2:0] ss_response_ack;
+wire [191:0] ss_response_data;
+wire ss_scroll0_active = ss_gp_ram_active && ss_gp_ram_addr < 13'h0800;
+wire ss_scroll1_active = ss_gp_ram_active &&
+                         ss_gp_ram_addr >= 13'h0800 && ss_gp_ram_addr < 13'h1000;
+wire ss_scroll2_active = ss_gp_ram_active &&
+                         ss_gp_ram_addr >= 13'h1000 && ss_gp_ram_addr < 13'h1800;
+wire ss_sprite_o_active = ss_gp_ram_active &&
+                          ss_gp_ram_addr >= 13'h1800 && ss_gp_ram_addr < 13'h1c00;
 
 //debugging 
 //  wire debug = 1'b1;
@@ -150,11 +198,11 @@ module raizing_gcu (
 //  initial fd = $fopen("log_gp9001.txt", "w");
 
 // layer offsets
-wire signed [12:0] background_scroll_xoffs = -12'h1D6;
+wire signed [12:0] background_scroll_xoffs = GAME == SSTRIKER ? -12'h1D5 : -12'h1D6;
 wire signed [12:0] background_scroll_xoffs_f = -12'h229;
-wire signed [12:0] foreground_scroll_xoffs = -12'h1D8;
+wire signed [12:0] foreground_scroll_xoffs = GAME == SSTRIKER ? -12'h1D7 : -12'h1D8;
 wire signed [12:0] foreground_scroll_xoffs_f = -12'h227;
-wire signed [12:0] text_scroll_xoffs = -12'h1DA;
+wire signed [12:0] text_scroll_xoffs = GAME == SSTRIKER ? -12'h1D9 : -12'h1DA;
 wire signed [12:0] text_scroll_xoffs_f = -12'h225;
 wire signed [12:0] sprite_scroll_xoffs = 12'h024; //12'h1CC;
 wire signed [12:0] sprite_scroll_xoffs_f = -12'h17B;
@@ -165,7 +213,7 @@ wire signed [12:0] foreground_scroll_yoffs = -12'h1EF;
 wire signed [12:0] foreground_scroll_yoffs_f = -12'h210;
 wire signed [12:0] text_scroll_yoffs = -12'h1EF;
 wire signed [12:0] text_scroll_yoffs_f = -12'h210;
-wire signed [12:0] sprite_scroll_yoffs = 12'h001; //-12'h1EF;
+wire signed [12:0] sprite_scroll_yoffs = GAME == KINGDMGP || GAME == SSTRIKER ? -12'h001 : 12'h001;
 wire signed [12:0] sprite_scroll_yoffs_f = -12'h108;
 
 //blanking signal generation
@@ -226,14 +274,18 @@ assign TEXT_SCROLL_Y = scr_reg_text_scroll_y;
 assign TEXT_SCROLL_XOFFS = text_scroll_xoffs;
 assign TEXT_SCROLL_YOFFS = text_scroll_yoffs;
 
-raizing_gp9001_vint u_vint (
+raizing_gp9001_vint #(.SS_ENABLE(SS_ENABLE)) u_vint (
     .clk        (CLK96),
     .reset      (RESET96),
     .line_start (GFX_CLK && H == 9'd0),
     .vpos       (V),
     .reg_write  (GP9001_OP_WRITE_REG),
     .reg_index  (cur_scr_reg_num),
-    .vint_n     (VINT)
+    .vint_n     (VINT),
+    .ss_hold    (ss_freeze),
+    .ss_restore (ss_control_restore_we),
+    .ss_state_in(ss_control_restore[205]),
+    .ss_state   (ss_vint_state)
 );
 
 reg INC_LAST_CYCLE = 1'b0;
@@ -268,7 +320,33 @@ always @(posedge CLK96, posedge RESET96) begin
         
         scr_reg_sprite_scroll_x <= 0;
         scr_reg_sprite_scroll_y <= 0;
-    end else begin
+    end else if(ss_control_restore_we) begin
+        cur_ram_ptr <= ss_control_restore[15:0];
+        cur_scr_reg_num <= ss_control_restore[23:16];
+        LAST_OP <= ss_control_restore[31:24];
+        scr_reg_background_scroll_x <= ss_control_restore[47:32];
+        scr_reg_background_scroll_y <= ss_control_restore[63:48];
+        scr_reg_foreground_scroll_x <= ss_control_restore[79:64];
+        scr_reg_foreground_scroll_y <= ss_control_restore[95:80];
+        scr_reg_text_scroll_x <= ss_control_restore[111:96];
+        scr_reg_text_scroll_y <= ss_control_restore[127:112];
+        scr_reg_sprite_scroll_x <= ss_control_restore[143:128];
+        scr_reg_sprite_scroll_y <= ss_control_restore[159:144];
+        reg_init_v_ctrl <= ss_control_restore[175:160];
+        scr_reg_background_flip_x <= ss_control_restore[238];
+        scr_reg_foreground_flip_x <= ss_control_restore[239];
+        scr_reg_text_flip_x <= ss_control_restore[240];
+        scr_reg_sprite_flip_x <= ss_control_restore[241];
+        scr_reg_background_flip_y <= ss_control_restore[242];
+        scr_reg_foreground_flip_y <= ss_control_restore[243];
+        scr_reg_text_flip_y <= ss_control_restore[244];
+        scr_reg_sprite_flip_y <= ss_control_restore[245];
+        INC_LAST_CYCLE <= ss_control_restore[246];
+        READ_LAST_CYCLE <= ss_control_restore[247];
+        st <= ss_control_restore[250:248];
+        GP9001RAM_WE <= ss_control_restore[251];
+        ACK <= ss_control_restore[252];
+    end else if(!ss_freeze) begin
         // if(debug && (GP9001_OP_SET_RAM_PTR || GP9001_OP_WRITE_RAM || GP9001_OP_READ_RAM_H || GP9001_OP_READ_RAM_L)) 
         //     $fwrite(fd, "time: %t, din: %h, dout: %h, cur_ram_ptr: %h, op: %h\n", $time/1000, DIN, DOUT, cur_ram_ptr, {GP9001_OP_SELECT_REG, GP9001_OP_WRITE_REG, GP9001_OP_SET_RAM_PTR, GP9001_OP_WRITE_RAM, GP9001_OP_READ_RAM_H, GP9001_OP_READ_RAM_L, GP9001_OP_OBJECTBANK_WR});
 
@@ -391,19 +469,28 @@ end
 
 //GP9001 RAM
 
-raizing_dual_ram #(.DW(16), .AW(13)) u_gp9001ram_044_045(
+raizing_dual_ram #(
+    .DW(16),
+    .AW(13),
+    .SS_ENABLE(SS_ENABLE)
+) u_gp9001ram_044_045(
     .clk0(CLK96),
     .clk1(CLK96),
     // Port 0
     .data0(GP9001RAM_DIN),
     .addr0(GP9001RAM_ADDR),
-    .we0(GP9001RAM_WE),
+    .we0(GP9001RAM_WE && !ss_freeze),
     .q0(),
     // Port 1
-    .data1(8'h0),
+    .data1(16'h0000),
     .addr1(GP9001RAM_ADDR),
     .we1(1'b0),
-    .q1(GP9001RAM_DOUT)
+    .q1(GP9001RAM_DOUT),
+    .ss_active(ss_gp_ram_active),
+    .ss_data(ss_gp_ram_data),
+    .ss_addr(ss_gp_ram_addr),
+    .ss_we(ss_gp_ram_we),
+    .ss_q(ss_gp_ram_q)
 );
 
 //GP9001 RAM (split out, to make rendering easier. only used internally by the GCU)
@@ -414,11 +501,8 @@ wire spriteram_we = GP9001RAM_WE && (GP9001RAM_ADDR>=14'h1800 && GP9001RAM_ADDR<
 
 //sprite lag fix
 reg [1:0] cur_buf = 0;
-wire [1:0] cur_buf_rd = cur_buf == 0 ? 0 :
-                        cur_buf == 1 ? 1 :
-                        cur_buf == 2 ? 2 :
-                        cur_buf == 3 ? 3 :
-                        0; //1 frames lag behind
+wire [1:0] sprite_lag = GAME == GAREGGA ? 2'd1 : 2'd0;
+wire [1:0] cur_buf_rd = cur_buf - sprite_lag;
 wire [12:0] spriteram_buff_offs = cur_buf==0 ? 0 :
                                   cur_buf==1 ? 14'h400 :
                                   cur_buf==2 ? 14'h800 :
@@ -449,7 +533,11 @@ always @(posedge CLK96, posedge RESET96) begin
         last_vb<=0;
         cur_buf<=0;
         clear_buff<=0;
-    end else begin
+    end else if(ss_control_restore_we) begin
+        cur_buf <= ss_control_restore[177:176];
+        last_vb <= ss_control_restore[178];
+        clear_buff <= ss_control_restore[179];
+    end else if(!ss_freeze) begin
         last_vb<=is_vb;
         if(is_vb && !last_vb) begin //start of vblank, cut spriteram disable for sorcer and kingdom for now
             cur_buf<=((cur_buf+1)%4);
@@ -462,13 +550,57 @@ end
 
 //clear buffer ahead
 reg c;
+
+always @* begin
+    ss_control_capture = 256'd0;
+    ss_control_capture[15:0] = cur_ram_ptr;
+    ss_control_capture[23:16] = cur_scr_reg_num;
+    ss_control_capture[31:24] = LAST_OP;
+    ss_control_capture[47:32] = scr_reg_background_scroll_x;
+    ss_control_capture[63:48] = scr_reg_background_scroll_y;
+    ss_control_capture[79:64] = scr_reg_foreground_scroll_x;
+    ss_control_capture[95:80] = scr_reg_foreground_scroll_y;
+    ss_control_capture[111:96] = scr_reg_text_scroll_x;
+    ss_control_capture[127:112] = scr_reg_text_scroll_y;
+    ss_control_capture[143:128] = scr_reg_sprite_scroll_x;
+    ss_control_capture[159:144] = scr_reg_sprite_scroll_y;
+    ss_control_capture[175:160] = reg_init_v_ctrl;
+    ss_control_capture[177:176] = cur_buf;
+    ss_control_capture[178] = last_vb;
+    ss_control_capture[179] = clear_buff;
+    ss_control_capture[180] = clear_buff_done;
+    ss_control_capture[193:181] = clear_buff_addr;
+    ss_control_capture[203:194] = clear_buff_counter;
+    ss_control_capture[204] = c;
+    ss_control_capture[205] = ss_vint_state;
+    ss_control_capture[237:206] = ss_object_banks;
+    ss_control_capture[238] = scr_reg_background_flip_x;
+    ss_control_capture[239] = scr_reg_foreground_flip_x;
+    ss_control_capture[240] = scr_reg_text_flip_x;
+    ss_control_capture[241] = scr_reg_sprite_flip_x;
+    ss_control_capture[242] = scr_reg_background_flip_y;
+    ss_control_capture[243] = scr_reg_foreground_flip_y;
+    ss_control_capture[244] = scr_reg_text_flip_y;
+    ss_control_capture[245] = scr_reg_sprite_flip_y;
+    ss_control_capture[246] = INC_LAST_CYCLE;
+    ss_control_capture[247] = READ_LAST_CYCLE;
+    ss_control_capture[250:248] = st;
+    ss_control_capture[251] = GP9001RAM_WE;
+    ss_control_capture[252] = ACK;
+end
+
 always @(posedge CLK96, posedge RESET96) begin
     if(RESET96) begin
         clear_buff_addr<=0;
         clear_buff_counter<=0;
         clear_buff_done<=0;
         c<=0;
-    end else begin
+    end else if(ss_control_restore_we) begin
+        clear_buff_done <= ss_control_restore[180];
+        clear_buff_addr <= ss_control_restore[193:181];
+        clear_buff_counter <= ss_control_restore[203:194];
+        c <= ss_control_restore[204];
+    end else if(!ss_freeze) begin
         if(clear_buff) begin
             c<=c+1;
             case(c)
@@ -489,103 +621,158 @@ always @(posedge CLK96, posedge RESET96) begin
     end
 end
 
-raizing_dual_ram #(.DW(16), .AW(10)) u_spriteram_o(
+raizing_dual_ram #(
+        .DW(16),
+        .AW(10),
+        .SS_ENABLE(SS_ENABLE)
+    ) u_spriteram_o(
         .clk0(CLK96),
         .clk1(CLK96),
         // Port 0
         .data0(GP9001RAM_DIN),
         .addr0(GP9001RAM_ADDR[9:0]),
-        .we0(spriteram_we),
+        .we0(spriteram_we && !ss_freeze),
         .q0(),
         // Port 1
         .data1(16'h0),
-        .addr1(clear_buff_addr),
+        .addr1(clear_buff_addr[9:0]),
         .we1(1'b0),
-        .q1(clear_buff_data)
+        .q1(clear_buff_data),
+        .ss_active(ss_sprite_o_active),
+        .ss_data(ss_gp_ram_data),
+        .ss_addr(ss_gp_ram_addr[9:0]),
+        .ss_we(ss_gp_ram_we),
+        .ss_q()
 );
 
-raizing_dual_ram #(.DW(16), .AW(13)) u_spriteram(
+raizing_dual_ram #(
+        .DW(16),
+        .AW(13),
+        .SS_ENABLE(SS_ENABLE)
+    ) u_spriteram(
         .clk0(CLK96),
         .clk1(CLK96),
         // Port 0
         .data0(clear_buff_data),
         .addr0(clear_buff_addr + spriteram_buff_offs),
-        .we0(clear_buff && !clear_buff_done),
+        .we0(clear_buff && !clear_buff_done && !ss_freeze),
         .q0(),
         // Port 1
         .data1(16'h0),
         .addr1(GP9001RAM_GCU_ADDR[9:0] + spriteram_buff_rd_offs),
         .we1(1'b0),
-        .q1(GP9001RAM_GCU_DOUT)
+        .q1(GP9001RAM_GCU_DOUT),
+        .ss_active(ss_sprite_ram_active),
+        .ss_data(ss_sprite_ram_data),
+        .ss_addr(ss_sprite_ram_addr),
+        .ss_we(ss_sprite_ram_we),
+        .ss_q(ss_sprite_ram_q)
 );
 
-raizing_dual_ram #(.DW(16), .AW(13)) u_spriteram2(
+raizing_dual_ram #(
+        .DW(16),
+        .AW(13),
+        .SS_ENABLE(SS_ENABLE)
+    ) u_spriteram2(
         .clk0(CLK96),
         .clk1(CLK96),
         // Port 0
         .data0(clear_buff_data),
         .addr0(clear_buff_addr + spriteram_buff_offs),
-        .we0(clear_buff && !clear_buff_done),
+        .we0(clear_buff && !clear_buff_done && !ss_freeze),
         .q0(),
         // Port 1
         .data1(16'h0),
         .addr1(GP9001RAM2_GCU_ADDR[9:0] + spriteram_buff_rd_offs),
         .we1(1'b0),
-        .q1(GP9001RAM2_GCU_DOUT)
+        .q1(GP9001RAM2_GCU_DOUT),
+        .ss_active(ss_sprite_ram_active),
+        .ss_data(ss_sprite_ram_data),
+        .ss_addr(ss_sprite_ram_addr),
+        .ss_we(ss_sprite_ram_we),
+        .ss_q(ss_sprite_ram2_q)
 );
 
-raizing_dual_ram #(.DW(16), .AW(11)) u_scroll0ram(
+raizing_dual_ram #(
+        .DW(16),
+        .AW(11),
+        .SS_ENABLE(SS_ENABLE)
+    ) u_scroll0ram(
         .clk0(CLK96),
         .clk1(CLK96),
         // Port 0
         .data0(GP9001RAM_DIN),
         .addr0(GP9001RAM_ADDR[10:0]),
-        .we0(scroll0ram_we),
+        .we0(scroll0ram_we && !ss_freeze),
         .q0(),
         // Port 1
-        .data1(8'h0),
-        .addr1(SCR0_GP9001RAM_GCU_ADDR),
+        .data1(16'h0000),
+        .addr1(SCR0_GP9001RAM_GCU_ADDR[10:0]),
         .we1(1'b0),
-        .q1(SCR0_GP9001RAM_GCU_DOUT)
+        .q1(SCR0_GP9001RAM_GCU_DOUT),
+        .ss_active(ss_scroll0_active),
+        .ss_data(ss_gp_ram_data),
+        .ss_addr(ss_gp_ram_addr[10:0]),
+        .ss_we(ss_gp_ram_we),
+        .ss_q()
 );
 
-raizing_dual_ram #(.DW(16), .AW(11)) u_scroll1ram(
+raizing_dual_ram #(
+        .DW(16),
+        .AW(11),
+        .SS_ENABLE(SS_ENABLE)
+    ) u_scroll1ram(
         .clk0(CLK96),
         .clk1(CLK96),
         // Port 0
         .data0(GP9001RAM_DIN),
         .addr0(GP9001RAM_ADDR[10:0]),
-        .we0(scroll1ram_we),
+        .we0(scroll1ram_we && !ss_freeze),
         .q0(),
         // Port 1
-        .data1(8'h0),
-        .addr1(SCR1_GP9001RAM_GCU_ADDR),
+        .data1(16'h0000),
+        .addr1(SCR1_GP9001RAM_GCU_ADDR[10:0]),
         .we1(1'b0),
-        .q1(SCR1_GP9001RAM_GCU_DOUT)
+        .q1(SCR1_GP9001RAM_GCU_DOUT),
+        .ss_active(ss_scroll1_active),
+        .ss_data(ss_gp_ram_data),
+        .ss_addr(ss_gp_ram_addr[10:0]),
+        .ss_we(ss_gp_ram_we),
+        .ss_q()
 );
 
-raizing_dual_ram #(.DW(16), .AW(11)) u_scroll2ram(
+raizing_dual_ram #(
+        .DW(16),
+        .AW(11),
+        .SS_ENABLE(SS_ENABLE)
+    ) u_scroll2ram(
         .clk0(CLK96),
         .clk1(CLK96),
         // Port 0
         .data0(GP9001RAM_DIN),
         .addr0(GP9001RAM_ADDR[10:0]),
-        .we0(scroll2ram_we),
+        .we0(scroll2ram_we && !ss_freeze),
         .q0(),
         // Port 1
-        .data1(8'h0),
-        .addr1(SCR2_GP9001RAM_GCU_ADDR),
+        .data1(16'h0000),
+        .addr1(SCR2_GP9001RAM_GCU_ADDR[10:0]),
         .we1(1'b0),
-        .q1(SCR2_GP9001RAM_GCU_DOUT)
+        .q1(SCR2_GP9001RAM_GCU_DOUT),
+        .ss_active(ss_scroll2_active),
+        .ss_data(ss_gp_ram_data),
+        .ss_addr(ss_gp_ram_addr[10:0]),
+        .ss_we(ss_gp_ram_we),
+        .ss_q()
 );
 
 //GFX interface/ banking
-AFBK_CT2 u_afbk_ct2(
+AFBK_CT2 #(.SS_ENABLE(SS_ENABLE)) u_afbk_ct2(
     .CLK(CLK),
     .CLK96(CLK96),
     .GFX_CLK(GFX_CLK),
     .RESET(RESET),
     .RESET96(RESET96),
+    .GAME(GAME),
     //object bank
     .OBJECTBANK_SLOT(GP9001_OBJECTBANK_SLOT),
     .OBJECTBANK_DIN(DIN & 4'hF),
@@ -648,7 +835,83 @@ AFBK_CT2 u_afbk_ct2(
     .GFX0SCR2_ADDR(GFX0SCR2_ADDR),
 	.GFX0SCR2_DOUT(GFX0SCR2_DOUT),
     .GFX1SCR2_ADDR(GFX1SCR2_ADDR),
-	.GFX1SCR2_DOUT(GFX1SCR2_DOUT)
+    .GFX1SCR2_DOUT(GFX1SCR2_DOUT),
+    .SS_HOLD(ss_freeze),
+    .SS_RESTORE(ss_control_restore_we),
+    .SS_OBJECT_BANKS_IN(ss_control_restore[237:206]),
+    .SS_OBJECT_BANKS(ss_object_banks)
 );
+
+raizing_ss_ram_adapter #(
+    .WIDTH(16),
+    .ADDR_WIDTH(13),
+    .SS_INDEX(25)
+) u_ss_gp_ram(
+    .clk(CLK96),
+    .reset(RESET96),
+    .ss_data(SS_DATA),
+    .ss_addr(SS_ADDR),
+    .ss_select(SS_SELECT),
+    .ss_write(SS_WRITE),
+    .ss_read(SS_READ),
+    .ss_query(SS_QUERY),
+    .ss_data_out(ss_response_data[0*64 +: 64]),
+    .ss_ack(ss_response_ack[0]),
+    .ram_active(ss_gp_ram_active),
+    .ram_addr(ss_gp_ram_addr),
+    .ram_data(ss_gp_ram_data),
+    .ram_we(ss_gp_ram_we),
+    .ram_q(ss_gp_ram_q)
+);
+
+raizing_ss_ram_adapter #(
+    .WIDTH(16),
+    .ADDR_WIDTH(13),
+    .SS_INDEX(26)
+) u_ss_sprite_ram(
+    .clk(CLK96),
+    .reset(RESET96),
+    .ss_data(SS_DATA),
+    .ss_addr(SS_ADDR),
+    .ss_select(SS_SELECT),
+    .ss_write(SS_WRITE),
+    .ss_read(SS_READ),
+    .ss_query(SS_QUERY),
+    .ss_data_out(ss_response_data[1*64 +: 64]),
+    .ss_ack(ss_response_ack[1]),
+    .ram_active(ss_sprite_ram_active),
+    .ram_addr(ss_sprite_ram_addr),
+    .ram_data(ss_sprite_ram_data),
+    .ram_we(ss_sprite_ram_we),
+    .ram_q(ss_sprite_ram_q)
+);
+
+raizing_ss_wide_register #(
+    .WIDTH(256),
+    .SS_INDEX(27)
+) u_ss_control(
+    .clk(CLK96),
+    .reset(RESET96),
+    .capture_data(ss_control_capture),
+    .restore_data(ss_control_restore),
+    .restore_we(ss_control_restore_we),
+    .ss_data(SS_DATA),
+    .ss_addr(SS_ADDR),
+    .ss_select(SS_SELECT),
+    .ss_write(SS_WRITE),
+    .ss_read(SS_READ),
+    .ss_query(SS_QUERY),
+    .ss_data_out(ss_response_data[2*64 +: 64]),
+    .ss_ack(ss_response_ack[2])
+);
+
+raizing_ss_response_mux #(.COUNT(3)) u_ss_response(
+    .ack(ss_response_ack),
+    .data(ss_response_data),
+    .ack_out(SS_ACK),
+    .data_out(SS_DATA_OUT)
+);
+
+assign SS_QUIESCED = !SS_ENABLE || ss_freeze;
 
 endmodule

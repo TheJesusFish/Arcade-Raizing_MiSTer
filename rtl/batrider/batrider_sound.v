@@ -23,7 +23,8 @@
 * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 module batrider_sound #(
-    parameter EXTERNAL_CHIPS = 0
+    parameter EXTERNAL_CHIPS = 0,
+    parameter SS_ENABLE = 0
 )(
     input                CLK,
     input                CLK96,
@@ -95,7 +96,20 @@ module batrider_sound #(
     output         [7:0] OKI1_ROM_DATA_OUT,
     output               OKI1_ROM_OK_OUT,
     input signed  [13:0] OKI1_SOUND_IN,
-    input                OKI1_SAMPLE_IN
+    input                OKI1_SAMPLE_IN,
+
+    input                SS_ACTIVE,
+    input                SS_FREEZE,
+    input                SS_RESTORE_BEGIN,
+    input         [63:0] SS_DATA,
+    input         [31:0] SS_ADDR,
+    input          [7:0] SS_SELECT,
+    input                SS_WRITE,
+    input                SS_READ,
+    input                SS_QUERY,
+    output        [63:0] SS_DATA_OUT,
+    output               SS_ACK,
+    output               SS_QUIESCED
 );
 
 // assign ACK = 1'b1;
@@ -142,6 +156,28 @@ wire oki1_wr_pulse = !oki1_wr_dec && oki1_wr_l;
 wire oki0_bank_wr_pulse = !oki0_bank_wr && oki0_bank_wr_l;
 wire oki1_bank_wr_pulse = !oki1_bank_wr && oki1_bank_wr_l;
 wire nmi_n;
+wire ss_cpu_hold;
+wire ss_cpu_quiesced;
+wire ss_cpu_restore;
+wire ss_cpu_restore_done;
+wire [228:0] ss_cpu_state;
+wire [228:0] ss_cpu_state_in;
+wire [7:0] ss_wait_state;
+wire [7:0] ss_wait_state_in;
+wire ss_sound_frozen = SS_ENABLE && SS_ACTIVE && ss_cpu_quiesced;
+wire [7:0] ss_select_active = SS_ENABLE && SS_ACTIVE ? SS_SELECT : 8'hff;
+wire [1:0] ss_nmi_state, ss_wait_ff_state;
+wire [31:0] ss_nmk0_state, ss_nmk1_state;
+wire [191:0] ss_control_restore;
+wire ss_control_restore_we;
+reg [191:0] ss_control_capture;
+wire ss_ram_active;
+wire [12:0] ss_ram_addr;
+wire [7:0] ss_ram_data;
+wire ss_ram_we;
+wire [7:0] ss_ram_q;
+wire [2:0] ss_response_ack;
+wire [191:0] ss_response_data;
 reg soundlatch3_wr,
     soundlatch4_wr,
     batrider_sndirq_w,
@@ -154,21 +190,60 @@ reg soundlatch3_wr,
     okim6295_device_1_rd,
     okim6295_device_1_wr_q;
 
-assign FM_CEN_OUT = YM2151_CEN & DIP_PAUSE;
-assign FM_CEN_P1_OUT = YM2151_CEN2 & DIP_PAUSE;
+always @* begin
+    ss_control_capture = 192'd0;
+    ss_control_capture[3:0] = bank;
+    ss_control_capture[4] = ram_cs;
+    ss_control_capture[5] = fm_cs;
+    ss_control_capture[6] = ROMZ80_CS;
+    ss_control_capture[24:7] = ROMZ80_ADDR;
+    ss_control_capture[25] = SNDIRQ;
+    ss_control_capture[26] = soundlatch3_wr;
+    ss_control_capture[27] = soundlatch4_wr;
+    ss_control_capture[28] = batrider_sndirq_w;
+    ss_control_capture[29] = batrider_clear_nmi_w;
+    ss_control_capture[30] = soundlatch_rd;
+    ss_control_capture[31] = soundlatch2_rd;
+    ss_control_capture[32] = ymsnd_rd;
+    ss_control_capture[33] = okim6295_device_0_rd;
+    ss_control_capture[34] = okim6295_device_1_rd;
+    ss_control_capture[42:35] = din;
+    ss_control_capture[50:43] = SOUNDLATCH3;
+    ss_control_capture[58:51] = SOUNDLATCH4;
+    ss_control_capture[66:59] = oki0_din;
+    ss_control_capture[74:67] = oki1_din;
+    ss_control_capture[75] = okim6295_device_0_wr_q;
+    ss_control_capture[76] = okim6295_device_1_wr_q;
+    ss_control_capture[77] = oki0_bank_wr_q;
+    ss_control_capture[78] = oki1_bank_wr_q;
+    ss_control_capture[81:79] = oki_bank_offset_q;
+    ss_control_capture[89:82] = oki_bank_din;
+    ss_control_capture[90] = oki0_wr_l;
+    ss_control_capture[91] = oki1_wr_l;
+    ss_control_capture[92] = oki0_bank_wr_l;
+    ss_control_capture[93] = oki1_bank_wr_l;
+    ss_control_capture[125:94] = ss_nmk0_state;
+    ss_control_capture[157:126] = ss_nmk1_state;
+    ss_control_capture[159:158] = ss_nmi_state;
+    ss_control_capture[161:160] = ss_wait_ff_state;
+    ss_control_capture[169:162] = ss_wait_state;
+end
+
+assign FM_CEN_OUT = YM2151_CEN & DIP_PAUSE & ~ss_sound_frozen;
+assign FM_CEN_P1_OUT = YM2151_CEN2 & DIP_PAUSE & ~ss_sound_frozen;
 assign FM_CS_N_OUT = !fm_chip_select;
 assign FM_WR_N_OUT = fm_write_n;
 assign FM_A0_OUT = fm_a0;
 assign FM_DIN_OUT = fm_din;
 
-assign OKI0_CEN_OUT = OKI_CEN & DIP_PAUSE;
+assign OKI0_CEN_OUT = OKI_CEN & DIP_PAUSE & ~ss_sound_frozen;
 assign OKI0_SS_OUT = 1'b1;
 assign OKI0_WR_N_OUT = ~okim6295_device_0_wr_q;
 assign OKI0_DIN_OUT = oki0_din;
 assign OKI0_ROM_DATA_OUT = PCM_DOUT;
 assign OKI0_ROM_OK_OUT = PCM_OK;
 
-assign OKI1_CEN_OUT = OKI_CEN & DIP_PAUSE;
+assign OKI1_CEN_OUT = OKI_CEN & DIP_PAUSE & ~ss_sound_frozen;
 assign OKI1_SS_OUT = 1'b0;
 assign OKI1_WR_N_OUT = ~okim6295_device_1_wr_q;
 assign OKI1_DIN_OUT = oki1_din;
@@ -195,7 +270,8 @@ wire [7:0] fx_mult = FX_LEVEL == 2 ? 8'h10 :
 
 localparam [7:0] FM_MIX_GAIN = 8'h07;
 always @(posedge CLK96) begin
-    peak <= peak_l | peak_r | peak_oki;
+    if(!ss_sound_frozen)
+        peak <= peak_l | peak_r | peak_oki;
 end
 
 reg [7:0] gain1;
@@ -208,12 +284,14 @@ wire [7:0] oki1_gain = SND_EN[2] ? gain1  : 8'd0;
 wire [7:0] oki_gain  = (SND_EN[1] | SND_EN[2]) ? 8'h12 : 8'd0;
 
 always @(posedge CLK96) begin
-    // Fold YM2151 stereo into the board's mono path.
-    final_left<=fm_mono;
-    final_oki0<=oki0_pre;
-    final_oki1<=oki1_pre;
-    final_oki<=oki_filtered;
-    gain1<=fx_mult;
+    if(!ss_sound_frozen) begin
+        // Fold YM2151 stereo into the board's mono path.
+        final_left<=fm_mono;
+        final_oki0<=oki0_pre;
+        final_oki1<=oki1_pre;
+        final_oki<=oki_filtered;
+        gain1<=fx_mult;
+    end
 end
 
 // Sum both M6295 channels before filtering.
@@ -247,9 +325,9 @@ jtframe_frac_cen #(.W(2), .WC(15)) u_ra9704_filter_cen(
 );
 
 ra9704_audio_filter u_ra9704_audio_filter(
-    .rst        ( RESET96               ),
+    .rst        ( RESET96 | (SS_ENABLE && SS_ACTIVE && SS_RESTORE_BEGIN) ),
     .clk        ( CLK96                 ),
-    .sample     ( ra9704_filter_cen[0]  ),
+    .sample     ( ra9704_filter_cen[0] & ~ss_sound_frozen ),
     .din        ( oki_mono              ),
     .dout       ( oki_filtered          )
 );
@@ -293,7 +371,23 @@ always @(posedge CLK96) begin
         ROMZ80_CS <= 0;
         ROMZ80_ADDR<=0;
         SNDIRQ<=0;
-    end else begin
+    end else if(ss_control_restore_we) begin
+        bank <= ss_control_restore[3:0];
+        ram_cs <= ss_control_restore[4];
+        fm_cs <= ss_control_restore[5];
+        ROMZ80_CS <= ss_control_restore[6];
+        ROMZ80_ADDR <= ss_control_restore[24:7];
+        SNDIRQ <= ss_control_restore[25];
+        soundlatch3_wr <= ss_control_restore[26];
+        soundlatch4_wr <= ss_control_restore[27];
+        batrider_sndirq_w <= ss_control_restore[28];
+        batrider_clear_nmi_w <= ss_control_restore[29];
+        soundlatch_rd <= ss_control_restore[30];
+        soundlatch2_rd <= ss_control_restore[31];
+        ymsnd_rd <= ss_control_restore[32];
+        okim6295_device_0_rd <= ss_control_restore[33];
+        okim6295_device_1_rd <= ss_control_restore[34];
+    end else if(!ss_sound_frozen) begin
             // if(debug) $display("address:%h, op:%b", A, {rd_n, wr_n, iorq_n, mreq_n, m1_n});
         soundlatch3_wr <= io_cs && !wr_n && A[7:0] == 8'h40;
         soundlatch4_wr <= io_cs && !wr_n && A[7:0] == 8'h42;
@@ -332,7 +426,23 @@ always @(posedge CLK96) begin
         oki1_wr_l <= 1'b0;
         oki0_bank_wr_l <= 1'b0;
         oki1_bank_wr_l <= 1'b0;
-    end else begin
+    end else if(ss_control_restore_we) begin
+        din <= ss_control_restore[42:35];
+        SOUNDLATCH3 <= ss_control_restore[50:43];
+        SOUNDLATCH4 <= ss_control_restore[58:51];
+        oki0_din <= ss_control_restore[66:59];
+        oki1_din <= ss_control_restore[74:67];
+        okim6295_device_0_wr_q <= ss_control_restore[75];
+        okim6295_device_1_wr_q <= ss_control_restore[76];
+        oki0_bank_wr_q <= ss_control_restore[77];
+        oki1_bank_wr_q <= ss_control_restore[78];
+        oki_bank_offset_q <= ss_control_restore[81:79];
+        oki_bank_din <= ss_control_restore[89:82];
+        oki0_wr_l <= ss_control_restore[90];
+        oki1_wr_l <= ss_control_restore[91];
+        oki0_bank_wr_l <= ss_control_restore[92];
+        oki1_bank_wr_l <= ss_control_restore[93];
+    end else if(!ss_sound_frozen) begin
         oki0_wr_l <= oki0_wr_dec;
         oki1_wr_l <= oki1_wr_dec;
         oki0_bank_wr_l <= oki0_bank_wr;
@@ -396,7 +506,11 @@ NMK112 u_nmk112_0(
     .OFFSET(oki_bank_offset_q),
     .DATA(oki_bank_din),
     .REQ_ADDR(oki0_pcm_addr & 'h3FFFF),
-    .REQ_DATA_ADDR(PCM_ADDR)
+    .REQ_DATA_ADDR(PCM_ADDR),
+    .SS_HOLD(ss_sound_frozen),
+    .SS_RESTORE(ss_cpu_restore),
+    .SS_STATE_IN(ss_control_restore[125:94]),
+    .SS_STATE(ss_nmk0_state)
 );
 
 NMK112 #(.ROM_OFFS('h100000)) u_nmk112_1(
@@ -406,34 +520,50 @@ NMK112 #(.ROM_OFFS('h100000)) u_nmk112_1(
     .OFFSET(oki_bank_offset_q),
     .DATA(oki_bank_din),
     .REQ_ADDR(oki1_pcm_addr & 'h3FFFF),
-    .REQ_DATA_ADDR(PCM1_ADDR)
+    .REQ_DATA_ADDR(PCM1_ADDR),
+    .SS_HOLD(ss_sound_frozen),
+    .SS_RESTORE(ss_cpu_restore),
+    .SS_STATE_IN(ss_control_restore[157:126]),
+    .SS_STATE(ss_nmk1_state)
 );
 
-jtframe_ff u_nmi_ff(
+raizing_ss_edge_ff u_nmi_ff(
     .clk      ( CLK96         ),
-    .rst      ( RESET96         ),
+    .reset    ( RESET96         ),
+    .hold     ( ss_sound_frozen ),
     .cen      ( 1'b1        ),
     .din      ( 1'b1        ),
     .q        (             ),
     .qn       ( nmi_n       ),
     .set      ( 1'b0        ),    // active high
     .clr      ( batrider_clear_nmi_w ),    // active high
-    .sigedge  ( CS ) // signal whose edge will trigger the FF
+    .sigedge  ( CS ), // signal whose edge will trigger the FF
+    .restore_we(ss_cpu_restore),
+    .restore_state(ss_control_restore[159:158]),
+    .capture_state(ss_nmi_state)
 );
 
-jtframe_ff u_m68wait_ff(
+raizing_ss_edge_ff u_m68wait_ff(
     .clk      ( CLK96         ),
-    .rst      ( RESET96         ),
+    .reset    ( RESET96         ),
+    .hold     ( ss_sound_frozen ),
     .cen      ( 1'b1        ),
     .din      ( 1'b1        ),
     .q        ( WAIT            ),
     .qn       (        ),
     .set      ( 1'b0        ),    // active high
     .clr      ( batrider_clear_nmi_w),    // active high
-    .sigedge  ( CS     ) // signal whose edge will trigger the FF
+    .sigedge  ( CS     ), // signal whose edge will trigger the FF
+    .restore_we(ss_cpu_restore),
+    .restore_state(ss_control_restore[161:160]),
+    .capture_state(ss_wait_ff_state)
 );
 
-raizing_t80_sysz80 #(.RAM_AW(13), .RECOVERY(0)) u_cpu(
+raizing_t80_sysz80 #(
+    .RAM_AW(13),
+    .RECOVERY(0),
+    .SS_ENABLE(SS_ENABLE)
+) u_cpu(
     .rst_n      ( ~RESET96      ),
     .clk        ( CLK96         ),
     .cen        ( z80_cen_eff ), // 5.333 MHz
@@ -456,8 +586,101 @@ raizing_t80_sysz80 #(.RAM_AW(13), .RECOVERY(0)) u_cpu(
     .ram_cs     ( ram_cs      ),
     // manage access to ROM data from SDRAM
     .rom_cs     ( ROMZ80_CS   ),
-    .rom_ok     ( ROMZ80_OK   )
+    .rom_ok     ( ROMZ80_OK   ),
+    .ss_ram_clk ( CLK96       ),
+    .ss_hold    ( ss_cpu_hold ),
+    .ss_quiesced(ss_cpu_quiesced),
+    .ss_restore ( ss_cpu_restore),
+    .ss_restore_done(ss_cpu_restore_done),
+    .ss_state   ( ss_cpu_state),
+    .ss_state_in(ss_cpu_state_in),
+    .ss_wait_state(ss_wait_state),
+    .ss_wait_state_in(ss_wait_state_in),
+    .ss_ram_active(ss_ram_active),
+    .ss_ram_addr(ss_ram_addr),
+    .ss_ram_data(ss_ram_data),
+    .ss_ram_we  (ss_ram_we),
+    .ss_ram_q   (ss_ram_q)
 );
+
+raizing_ss_sound_cpu #(
+    .CPU_CLOCK_ASYNC(0),
+    .SS_INDEX(15)
+) u_ss_cpu(
+    .ss_clk(CLK96),
+    .ss_reset(RESET96),
+    .cpu_clk(CLK96),
+    .cpu_reset(RESET96),
+    .ss_freeze(SS_ENABLE && SS_ACTIVE && SS_FREEZE),
+    .ss_restore_begin(SS_ENABLE && SS_ACTIVE && SS_RESTORE_BEGIN),
+    .cpu_hold(ss_cpu_hold),
+    .cpu_quiesced(ss_cpu_quiesced),
+    .cpu_restore(ss_cpu_restore),
+    .cpu_restore_done(ss_cpu_restore_done),
+    .cpu_state(ss_cpu_state),
+    .cpu_state_in(ss_cpu_state_in),
+    .quiesced(),
+    .restore_done(),
+    .ss_data(SS_DATA),
+    .ss_addr(SS_ADDR),
+    .ss_select(ss_select_active),
+    .ss_write(SS_WRITE),
+    .ss_read(SS_READ),
+    .ss_query(SS_QUERY),
+    .ss_data_out(ss_response_data[0*64 +: 64]),
+    .ss_ack(ss_response_ack[0])
+);
+
+raizing_ss_ram_adapter #(
+    .WIDTH(8),
+    .ADDR_WIDTH(13),
+    .SS_INDEX(16)
+) u_ss_ram(
+    .clk(CLK96),
+    .reset(RESET96),
+    .ss_data(SS_DATA),
+    .ss_addr(SS_ADDR),
+    .ss_select(ss_select_active),
+    .ss_write(SS_WRITE),
+    .ss_read(SS_READ),
+    .ss_query(SS_QUERY),
+    .ss_data_out(ss_response_data[1*64 +: 64]),
+    .ss_ack(ss_response_ack[1]),
+    .ram_active(ss_ram_active),
+    .ram_addr(ss_ram_addr),
+    .ram_data(ss_ram_data),
+    .ram_we(ss_ram_we),
+    .ram_q(ss_ram_q)
+);
+
+raizing_ss_wide_register #(
+    .WIDTH(192),
+    .SS_INDEX(17)
+) u_ss_control(
+    .clk(CLK96),
+    .reset(RESET96),
+    .capture_data(ss_control_capture),
+    .restore_data(ss_control_restore),
+    .restore_we(ss_control_restore_we),
+    .ss_data(SS_DATA),
+    .ss_addr(SS_ADDR),
+    .ss_select(ss_select_active),
+    .ss_write(SS_WRITE),
+    .ss_read(SS_READ),
+    .ss_query(SS_QUERY),
+    .ss_data_out(ss_response_data[2*64 +: 64]),
+    .ss_ack(ss_response_ack[2])
+);
+
+raizing_ss_response_mux #(.COUNT(3)) u_ss_response(
+    .ack(ss_response_ack),
+    .data(ss_response_data),
+    .ack_out(SS_ACK),
+    .data_out(SS_DATA_OUT)
+);
+
+assign ss_wait_state_in = ss_control_restore[169:162];
+assign SS_QUIESCED = !SS_ENABLE || !SS_ACTIVE || ss_cpu_quiesced;
 
 assign PCM_CS = 1'b1;
 assign PCM1_CS = 1'b1;

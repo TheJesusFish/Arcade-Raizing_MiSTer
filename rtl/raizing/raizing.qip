@@ -15,6 +15,23 @@ set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_gp9001_vint.v]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) raizing_68kdtack.v]
 
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate/raizing_ss_68k.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate/raizing_ss_async_register.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate/raizing_ss_auto32.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate/raizing_ss_bus.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate/raizing_ss_cdc.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate/raizing_ss_controller.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate/raizing_ss_ddr.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate/raizing_ss_edge_ff.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate/raizing_ss_flat.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate/raizing_ss_jt6295_generated.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate/raizing_ss_jt51_replay.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate/raizing_ss_pause.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate/raizing_ss_sound_cpu.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate/raizing_ss_stream.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate/raizing_ss_ui.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate/raizing_ss_ymz280b_replay.sv
+
 set_global_assignment -name VERILOG_FILE rtl/batrider/batrider_clock.v
 set_global_assignment -name VERILOG_FILE rtl/batrider/batrider_sdram.v
 set_global_assignment -name VERILOG_FILE rtl/batrider/batrider_sound.v

@@ -8,7 +8,8 @@ module raizing_dual_ram16 #(
     parameter SIMHEXFILE_HI = "",
     parameter ENDIAN = 0,
     parameter VERBOSE = 0,
-    parameter VERBOSE_OFFSET = 0
+    parameter VERBOSE_OFFSET = 0,
+    parameter SS_ENABLE = 0
 )(
     input          clk0,
     input  [15:0] data0,
@@ -20,7 +21,13 @@ module raizing_dual_ram16 #(
     input  [15:0] data1,
     input  [AW:1] addr1,
     input  [1:0]  we1,
-    output [15:0] q1
+    output [15:0] q1,
+
+    input          ss_active,
+    input  [15:0] ss_data,
+    input  [AW:1] ss_addr,
+    input  [1:0]  ss_we,
+    output [15:0] ss_q
 );
 
     localparam LO_BYTE = ENDIAN ? 1 : 0;
@@ -32,7 +39,8 @@ module raizing_dual_ram16 #(
         .SIMFILE(SIMFILE),
         .SIMHEXFILE(SIMHEXFILE_LO),
         .SIMFILE_BYTE(LO_BYTE),
-        .FULL_DW(16)
+        .FULL_DW(16),
+        .SS_ENABLE(SS_ENABLE)
     ) u_lo (
         .clk0(clk0),
         .data0(data0[7:0]),
@@ -44,7 +52,12 @@ module raizing_dual_ram16 #(
         .data1(data1[7:0]),
         .addr1(addr1),
         .we1(we1[0]),
-        .q1(q1[7:0])
+        .q1(q1[7:0]),
+        .ss_active(ss_active),
+        .ss_data(ss_data[7:0]),
+        .ss_addr(ss_addr),
+        .ss_we(ss_we[0]),
+        .ss_q(ss_q[7:0])
     );
 
     raizing_dual_ram #(
@@ -53,7 +66,8 @@ module raizing_dual_ram16 #(
         .SIMFILE(SIMFILE),
         .SIMHEXFILE(SIMHEXFILE_HI),
         .SIMFILE_BYTE(HI_BYTE),
-        .FULL_DW(16)
+        .FULL_DW(16),
+        .SS_ENABLE(SS_ENABLE)
     ) u_hi (
         .clk0(clk0),
         .data0(data0[15:8]),
@@ -65,7 +79,12 @@ module raizing_dual_ram16 #(
         .data1(data1[15:8]),
         .addr1(addr1),
         .we1(we1[1]),
-        .q1(q1[15:8])
+        .q1(q1[15:8]),
+        .ss_active(ss_active),
+        .ss_data(ss_data[15:8]),
+        .ss_addr(ss_addr),
+        .ss_we(ss_we[1]),
+        .ss_q(ss_q[15:8])
     );
 
 `ifdef SIMULATION

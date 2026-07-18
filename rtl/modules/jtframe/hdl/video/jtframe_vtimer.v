@@ -49,10 +49,20 @@ module jtframe_vtimer(
     output  reg         LHBL,
     output  reg         LVBL,
     output  reg         HS,
-    output  reg         VS
+    output  reg         VS,
+    input               ss_hold,
+    input               ss_restore,
+    input       [43:0]  ss_state_in,
+    output      [43:0]  ss_state
 );
 
 reg LVBL2, LVBL1;
+parameter SS_ENABLE = 0;
+
+assign ss_state = {
+    VS, HS, LVBL2, LVBL1, LVBL, LHBL, Vinit, Hinit,
+    vrender1, vrender, vdump, H
+};
 
 // Default values suit Contra arcade
 parameter [8:0] V_START  = 9'd0,
@@ -109,42 +119,60 @@ end
 `endif
 
 // H counter
-always @(posedge clk) if(pxl_cen) begin
-    Hinit <= H == HINIT;
-    if( HJUMP[0] )
-        H <= H==9'hFF ? 9'h180 : (H+9'd1);
-    else
-        H <= H == HCNT_END ? HCNT_START : (H+9'd1);
+always @(posedge clk) begin
+    if(SS_ENABLE && ss_restore) begin
+        H <= ss_state_in[8:0];
+        Hinit <= ss_state_in[36];
+    end else if(!(SS_ENABLE && ss_hold) && pxl_cen) begin
+        Hinit <= H == HINIT;
+        if( HJUMP[0] )
+            H <= H==9'hFF ? 9'h180 : (H+9'd1);
+        else
+            H <= H == HCNT_END ? HCNT_START : (H+9'd1);
+    end
 end
 
-always @(posedge clk) if(pxl_cen) begin
-    if( H == H_VNEXT ) begin
-        Vinit    <= vdump==VB_END;
-        vrender1 <= vrender1==VCNT_END ? V_START : vrender1 + 9'd1;
-        vrender  <= vrender1;
-        vdump    <= vrender;
-    end
+always @(posedge clk) begin
+    if(SS_ENABLE && ss_restore) begin
+        vdump <= ss_state_in[17:9];
+        vrender <= ss_state_in[26:18];
+        vrender1 <= ss_state_in[35:27];
+        Vinit <= ss_state_in[37];
+        LHBL <= ss_state_in[38];
+        LVBL <= ss_state_in[39];
+        LVBL1 <= ss_state_in[40];
+        LVBL2 <= ss_state_in[41];
+        HS <= ss_state_in[42];
+        VS <= ss_state_in[43];
+    end else if(!(SS_ENABLE && ss_hold) && pxl_cen) begin
+        if( H == H_VNEXT ) begin
+            Vinit    <= vdump==VB_END;
+            vrender1 <= vrender1==VCNT_END ? V_START : vrender1 + 9'd1;
+            vrender  <= vrender1;
+            vdump    <= vrender;
+        end
 
-    if( H == HB_START ) begin
-        LHBL <= 0;
-    end else if( H == HB_END ) LHBL <= 1;
-    if( H == H_VB ) begin
-        { LVBL, LVBL1 } <= { LVBL1, LVBL2 };
-        case( vrender1 )
-            VB_START: LVBL2 <= 0;
-            VB_END:   LVBL2 <= 1;
-            default:;
-        endcase // vdump
-    end
+        if( H == HB_START ) begin
+            LHBL <= 0;
+        end else if( H == HB_END ) LHBL <= 1;
+        if( H == H_VB ) begin
+            { LVBL, LVBL1 } <= { LVBL1, LVBL2 };
+            case( vrender1 )
+                VB_START: LVBL2 <= 0;
+                VB_END:   LVBL2 <= 1;
+                default:;
+            endcase // vdump
+        end
 
-    if (H==HS_START) begin
-        HS <= 1;
-    end
+        if (H==HS_START) begin
+            HS <= 1;
+        end
 
-    if (H==HS_END) begin
-        HS <= 0;
-        if (vdump==VS_START) VS <= 1;
-        if (vdump==VS_END  ) VS <= 0;
+        if (H==HS_END) begin
+            HS <= 0;
+            if (vdump==VS_START) VS <= 1;
+            if (vdump==VS_END  ) VS <= 0;
+        end
     end
 end
 

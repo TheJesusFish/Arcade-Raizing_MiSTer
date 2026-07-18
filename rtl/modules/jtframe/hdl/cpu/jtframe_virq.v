@@ -16,7 +16,9 @@
     Version: 1.0
     Date: 9-4-2021 */
 
-module jtframe_virq(
+module jtframe_virq #(
+    parameter SS_ENABLE = 0
+)(
     input      rst,
     input      clk,
     input      LVBL,
@@ -28,19 +30,29 @@ module jtframe_virq(
     input      custom_in,      // trigger the custom interrupt
     output reg blin_n,         // low when entering VBLANK
     output reg blout_n,        // low when leaving  VBLANK
-    output reg custom_n        // custom condition
+    output reg custom_n,       // custom condition
+
+    input      ss_hold,
+    input      ss_restore,
+    input [5:0] ss_state_in,
+    output [5:0] ss_state
 );
 
 reg last_LVBL, last_cin, skip;
+
+assign ss_state = {custom_n, blin_n, blout_n, last_LVBL, last_cin, skip};
 
 always @(posedge clk) begin : int_gen
     if( rst ) begin
         custom_n <= 1;
         blin_n   <= 1;
         blout_n  <= 1;
+        last_LVBL <= 0;
         last_cin <= 0;
         skip     <= 0;
-    end else begin
+    end else if(SS_ENABLE && ss_restore) begin
+        {custom_n, blin_n, blout_n, last_LVBL, last_cin, skip} <= ss_state_in;
+    end else if(!(SS_ENABLE && ss_hold)) begin
         last_LVBL <= LVBL;
         last_cin  <= custom_in;
 

@@ -22,7 +22,8 @@ module jt9346 #(
     parameter
     AW=6,   // Memory address bits
     CW=AW,  // bits between the 2-bit op command and the data
-    DW=16
+    DW=16,
+    SS_ENABLE=0
 ) (
     input           rst,        // system reset
     input           clk,        // system clock
@@ -39,7 +40,11 @@ module jt9346 #(
     output [DW-1:0] dump_dout,
     // NVRAM contents changed
     input           dump_clr,   // Clear the flag
-    output reg      dump_flag   // There was a write
+    output reg      dump_flag,  // There was a write
+    input           ss_hold,
+    input           ss_restore,
+    input  [34+CW+4*DW-1:0] ss_state_in,
+    output [34+CW+4*DW-1:0] ss_state
 );
 
 
@@ -50,12 +55,47 @@ reg  [   1:0] dout_up;
 wire          sclk_posedge = sclk && !last_sclk;
 reg  [CW-1:0] addr;
 reg  [DW-1:0] newdata, dout, mem_din;
+wire [DW-1:0] ram_qout;
+reg  [DW-1:0] held_qout;
 wire [DW-1:0] qout;
 reg  [  15:0] rx_cnt;
 reg  [   1:0] op;
 reg  [   6:0] st;
 wire [DW-1:0] next_data = { newdata[DW-2:0], sdi };
 wire [CW+1:0] full_op = { op, addr };
+wire ss_hold_active = SS_ENABLE && ss_hold;
+wire ss_restore_active = SS_ENABLE && ss_restore;
+assign qout = ss_hold_active ? held_qout : ram_qout;
+
+localparam SS_ADDR_LSB = 7;
+localparam SS_NEWDATA_LSB = SS_ADDR_LSB + CW;
+localparam SS_DOUT_LSB = SS_NEWDATA_LSB + DW;
+localparam SS_MEM_DIN_LSB = SS_DOUT_LSB + DW;
+localparam SS_QOUT_LSB = SS_MEM_DIN_LSB + DW;
+localparam SS_RX_CNT_LSB = SS_QOUT_LSB + DW;
+localparam SS_OP_LSB = SS_RX_CNT_LSB + 16;
+localparam SS_ST_LSB = SS_OP_LSB + 2;
+localparam SS_SDO_BIT = SS_ST_LSB + 7;
+localparam SS_DUMP_FLAG_BIT = SS_SDO_BIT + 1;
+
+assign ss_state = {
+    dump_flag,
+    sdo,
+    st,
+    op,
+    rx_cnt,
+    qout,
+    mem_din,
+    dout,
+    newdata,
+    addr,
+    dout_up,
+    mem_we,
+    last_sclk,
+    sdi_l,
+    write_all,
+    erase_en
+};
 
 `ifdef SIMULATION
 wire [AW-1:0] next_addr = {addr[AW-2:0], sdi};
@@ -64,7 +104,19 @@ wire [AW-1:0] next_addr = {addr[AW-2:0], sdi};
 localparam IDLE=7'd1, RX=7'd2, READ=7'd4, WRITE=7'd8, WRITE_ALL=7'h10,
            PRE_READ=7'h20, WAIT=7'h40;
 
-always @(posedge clk) last_sclk <= sclk;
+always @(posedge clk) begin
+    if(ss_restore_active)
+        last_sclk <= ss_state_in[3];
+    else if(!ss_hold_active)
+        last_sclk <= sclk;
+end
+
+always @(posedge clk) begin
+    if(ss_restore_active)
+        held_qout <= ss_state_in[SS_QOUT_LSB +: DW];
+    else if(!ss_hold_active)
+        held_qout <= ram_qout;
+end
 
 jt9346_dual_ram #(.DW(DW), .AW(AW)) u_ram(
     .clk0   ( clk       ),
@@ -72,8 +124,8 @@ jt9346_dual_ram #(.DW(DW), .AW(AW)) u_ram(
     // First port: internal use
     .addr0  ( addr[0+:AW] ),
     .data0  ( mem_din   ),
-    .we0    ( mem_we    ),
-    .q0     ( qout      ),
+    .we0    ( mem_we && !ss_hold_active ),
+    .q0     ( ram_qout  ),
     // Second port: dump
     .addr1  ( dump_addr ),
     .data1  ( dump_din  ),
@@ -108,7 +160,22 @@ always @(posedge clk, posedge rst) begin
         sdo      <= 1'b0;
         dout_up  <= 0;
         dump_flag<= 0;
-    end else begin
+    end else if(ss_restore_active) begin
+        erase_en <= ss_state_in[0];
+        write_all <= ss_state_in[1];
+        sdi_l <= ss_state_in[2];
+        mem_we <= ss_state_in[4];
+        dout_up <= ss_state_in[5 +: 2];
+        addr <= ss_state_in[SS_ADDR_LSB +: CW];
+        newdata <= ss_state_in[SS_NEWDATA_LSB +: DW];
+        dout <= ss_state_in[SS_DOUT_LSB +: DW];
+        mem_din <= ss_state_in[SS_MEM_DIN_LSB +: DW];
+        rx_cnt <= ss_state_in[SS_RX_CNT_LSB +: 16];
+        op <= ss_state_in[SS_OP_LSB +: 2];
+        st <= ss_state_in[SS_ST_LSB +: 7];
+        sdo <= ss_state_in[SS_SDO_BIT];
+        dump_flag <= ss_state_in[SS_DUMP_FLAG_BIT];
+    end else if(!ss_hold_active) begin
         if( dout_up[0] ) begin
             `REPORT_READ ( addr, qout )
             dout    <= qout;
@@ -235,7 +302,10 @@ end
 endmodule
 
 
-module jt9346_dual_ram #(parameter DW=8, AW=10) (
+module jt9346_dual_ram #(
+    parameter DW=8,
+    parameter AW=10
+) (
     input   clk0,
     input   clk1,
     // Port 0

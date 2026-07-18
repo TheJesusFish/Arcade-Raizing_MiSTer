@@ -23,7 +23,8 @@
 * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 module garegga_sound #(
-    parameter EXTERNAL_CHIPS = 0
+    parameter EXTERNAL_CHIPS = 0,
+    parameter SS_ENABLE = 0
 )(
     input                CLK,
     input                CLK96,
@@ -87,7 +88,20 @@ module garegga_sound #(
     output         [7:0] OKI0_ROM_DATA_OUT,
     output               OKI0_ROM_OK_OUT,
     input signed  [13:0] OKI0_SOUND_IN,
-    input                OKI0_SAMPLE_IN
+    input                OKI0_SAMPLE_IN,
+
+    input                SS_ACTIVE,
+    input                SS_FREEZE,
+    input                SS_RESTORE_BEGIN,
+    input         [63:0] SS_DATA,
+    input         [31:0] SS_ADDR,
+    input          [7:0] SS_SELECT,
+    input                SS_WRITE,
+    input                SS_READ,
+    input                SS_QUERY,
+    output        [63:0] SS_DATA_OUT,
+    output               SS_ACK,
+    output               SS_QUIESCED
 );
 
 localparam GAREGGA = 'h0, KINGDMGP = 'h2, SSTRIKER = 'h1;
@@ -121,15 +135,63 @@ reg nmk112_we_q;
 reg okim6295_device_0_wr_q;
 wire [17:0] oki0_pcm_addr, oki1_pcm_addr;
 wire [20:0] nmk_pcm_addr;
+wire ss_cpu_hold;
+wire ss_cpu_quiesced;
+wire ss_cpu_restore;
+wire ss_cpu_restore_done;
+wire [228:0] ss_cpu_state;
+wire [228:0] ss_cpu_state_in;
+wire [7:0] ss_wait_state;
+wire [1:0] ss_int_state, ss_m68wait_state;
+wire [31:0] ss_nmk_state;
+wire [127:0] ss_control_restore;
+wire ss_control_restore_we;
+reg [127:0] ss_control_capture;
+wire ss_sound_frozen = SS_ENABLE && SS_ACTIVE && ss_cpu_quiesced;
+wire [7:0] ss_select_active = SS_ENABLE && SS_ACTIVE ? SS_SELECT : 8'hff;
+wire [1:0] ss_response_ack;
+wire [127:0] ss_response_data;
+reg soundlatch_rd,
+    soundlatch_ack,
+    ymsnd_rd,
+    okim6295_device_0_rd,
+    raizing_z80_bankswitch_w,
+    e01d_rd;
 
-assign FM_CEN_OUT = (is_sorcer_kingdom ? YM2151_CEN_1 : YM2151_CEN) & DIP_PAUSE;
-assign FM_CEN_P1_OUT = (is_sorcer_kingdom ? YM2151_CEN2_1 : YM2151_CEN2) & DIP_PAUSE;
+always @* begin
+    ss_control_capture = 128'd0;
+    ss_control_capture[3:0] = bank;
+    ss_control_capture[4] = ram_cs;
+    ss_control_capture[5] = fm_cs;
+    ss_control_capture[6] = ROMZ80_CS;
+    ss_control_capture[23:7] = ROMZ80_ADDR;
+    ss_control_capture[24] = soundlatch_rd;
+    ss_control_capture[25] = soundlatch_ack;
+    ss_control_capture[26] = ymsnd_rd;
+    ss_control_capture[27] = okim6295_device_0_rd;
+    ss_control_capture[28] = raizing_z80_bankswitch_w;
+    ss_control_capture[29] = e01d_rd;
+    ss_control_capture[37:30] = din;
+    ss_control_capture[45:38] = oki0_din;
+    ss_control_capture[53:46] = oki1_din;
+    ss_control_capture[54] = nmk112_we_q;
+    ss_control_capture[55] = okim6295_device_0_wr_q;
+    ss_control_capture[58:56] = nmk112_offset_0a;
+    ss_control_capture[66:59] = nmk112_data_0a;
+    ss_control_capture[98:67] = ss_nmk_state;
+    ss_control_capture[100:99] = ss_int_state;
+    ss_control_capture[102:101] = ss_m68wait_state;
+    ss_control_capture[110:103] = ss_wait_state;
+end
+
+assign FM_CEN_OUT = (is_sorcer_kingdom ? YM2151_CEN_1 : YM2151_CEN) & DIP_PAUSE & ~ss_sound_frozen;
+assign FM_CEN_P1_OUT = (is_sorcer_kingdom ? YM2151_CEN2_1 : YM2151_CEN2) & DIP_PAUSE & ~ss_sound_frozen;
 assign FM_CS_N_OUT = !fm_cs;
 assign FM_WR_N_OUT = wr_n;
 assign FM_A0_OUT = A[0];
 assign FM_DIN_OUT = dout;
 
-assign OKI0_CEN_OUT = (is_sorcer_kingdom ? OKI_CEN_1 : OKI_CEN) & DIP_PAUSE;
+assign OKI0_CEN_OUT = (is_sorcer_kingdom ? OKI_CEN_1 : OKI_CEN) & DIP_PAUSE & ~ss_sound_frozen;
 assign OKI0_SS_OUT = 1'b1;
 assign OKI0_WR_N_OUT = ~okim6295_device_0_wr_q;
 assign OKI0_DIN_OUT = is_sorcer_kingdom ? oki1_din : oki0_din;
@@ -202,12 +264,6 @@ jtframe_mixer #(.W0(16), .W1(14), .WOUT(16)) u_mix_left(
 
 //io
 wire nmi_n = 1'b1;
-reg soundlatch_rd,
-    soundlatch_ack,
-    ymsnd_rd,
-    okim6295_device_0_rd,
-    raizing_z80_bankswitch_w,
-    e01d_rd;
 
 wire z80_mem_rd = !mreq_n && !rd_n;
 wire z80_mem_wr = !mreq_n && !wr_n;
@@ -230,7 +286,18 @@ always @(posedge CLK96) begin
         fm_cs <= 0;
         ROMZ80_CS <= 0;
         ROMZ80_ADDR<=0;
-    end else begin
+    end else if(ss_control_restore_we) begin
+        ram_cs <= ss_control_restore[4];
+        fm_cs <= ss_control_restore[5];
+        ROMZ80_CS <= ss_control_restore[6];
+        ROMZ80_ADDR <= ss_control_restore[23:7];
+        soundlatch_rd <= ss_control_restore[24];
+        soundlatch_ack <= ss_control_restore[25];
+        ymsnd_rd <= ss_control_restore[26];
+        okim6295_device_0_rd <= ss_control_restore[27];
+        raizing_z80_bankswitch_w <= ss_control_restore[28];
+        e01d_rd <= ss_control_restore[29];
+    end else if(!ss_sound_frozen) begin
 `ifdef SIMULATION
         if(debug)
             $fwrite(fd, "time: %t, addr: %h, int_n: %h, m1_n: %h, iorq_n: %h, dout: %h, din: %h\n", $time/1000, A, int_n, m1_n, iorq_n, dout, din);
@@ -265,7 +332,16 @@ always @(posedge CLK96) begin
         nmk112_we_q <= 1'b0;
         nmk112_offset_0a <= 3'd0;
         nmk112_data_0a <= 8'h0;
-    end else begin
+    end else if(ss_control_restore_we) begin
+        bank <= ss_control_restore[3:0];
+        din <= ss_control_restore[37:30];
+        oki0_din <= ss_control_restore[45:38];
+        oki1_din <= ss_control_restore[53:46];
+        nmk112_we_q <= ss_control_restore[54];
+        okim6295_device_0_wr_q <= ss_control_restore[55];
+        nmk112_offset_0a <= ss_control_restore[58:56];
+        nmk112_data_0a <= ss_control_restore[66:59];
+    end else if(!ss_sound_frozen) begin
         okim6295_device_0_wr_q <= okim6295_device_0_wr_dec;
         nmk112_we_q <= raizing_oki_bankswitch_w_dec;
 
@@ -307,38 +383,53 @@ NMK112 u_nmk112_0(
     .OFFSET(nmk112_offset_0a),
     .DATA(nmk112_data_0a),
     .REQ_ADDR(oki0_pcm_addr),
-    .REQ_DATA_ADDR(nmk_pcm_addr)
+    .REQ_DATA_ADDR(nmk_pcm_addr),
+    .SS_HOLD(ss_sound_frozen),
+    .SS_RESTORE(ss_cpu_restore),
+    .SS_STATE_IN(ss_control_restore[98:67]),
+    .SS_STATE(ss_nmk_state)
 );
 
-jtframe_ff u_int_ff(
+raizing_ss_edge_ff u_int_ff(
     .clk      ( CLK96         ),
-    .rst      ( RESET96         ),
+    .reset    ( RESET96         ),
+    .hold     ( ss_sound_frozen ),
     .cen      ( 1'b1        ),
     .din      ( 1'b1        ),
     .q        (             ),
     .qn       ( int_n       ),
     .set      ( 1'b0 ),    // active high
     .clr      ( !iorq_n && !m1_n ),    // active high
-    .sigedge  ( Z80INT ) // signal whose edge will trigger the FF
+    .sigedge  ( Z80INT ), // signal whose edge will trigger the FF
+    .restore_we(ss_cpu_restore),
+    .restore_state(ss_control_restore[100:99]),
+    .capture_state(ss_int_state)
 );
 
-jtframe_ff u_m68wait_ff(
+raizing_ss_edge_ff u_m68wait_ff(
     .clk      ( CLK96         ),
-    .rst      ( RESET96         ),
+    .reset    ( RESET96         ),
+    .hold     ( ss_sound_frozen ),
     .cen      ( 1'b1        ),
     .din      ( 1'b1        ),
     .q        ( WAIT            ),
     .qn       (        ),
     .set      ( 1'b0        ),    // active high
     .clr      ( soundlatch_ack ),    // active high
-    .sigedge  ( Z80INT     ) // signal whose edge will trigger the FF
+    .sigedge  ( Z80INT     ), // signal whose edge will trigger the FF
+    .restore_we(ss_cpu_restore),
+    .restore_state(ss_control_restore[102:101]),
+    .capture_state(ss_m68wait_state)
 );
 wire z80int_n = GAME == GAREGGA ? int_n : ym_irq_n;
 
 wire busak_n;
 wire wait_n = 1'b1;
 
-raizing_z80wait #(1) u_wait(
+raizing_z80wait #(
+    .DEVCNT(1),
+    .SS_ENABLE(SS_ENABLE)
+) u_wait(
     .rst_n      ( ~audio_cpu_reset ),
     .clk        ( CLK96       ),
     .cen_in     ( Z80_CEN       ),
@@ -351,10 +442,14 @@ raizing_z80wait #(1) u_wait(
     .dev_busy   ( 1'b0      ),
     // manage access to ROM data from SDRAM
     .rom_cs     ( ROMZ80_CS    ),
-    .rom_ok     ( ROMZ80_OK    )
+    .rom_ok     ( ROMZ80_OK    ),
+    .ss_hold    ( ss_sound_frozen ),
+    .ss_restore ( ss_cpu_restore ),
+    .ss_state_in(ss_control_restore[110:103]),
+    .ss_state   (ss_wait_state)
 );
 
-raizing_t80 u_cpu(
+raizing_t80 #(.SS_ENABLE(SS_ENABLE)) u_cpu(
     .rst_n    ( ~audio_cpu_reset ),
     .clk      ( CLK96       ),
     .cen      ( cpu_cen   ),
@@ -372,8 +467,70 @@ raizing_t80 u_cpu(
     .busak_n  (    ),
     .A        ( A         ),
     .din      ( din       ),
-    .dout     ( dout      )
+    .dout     ( dout      ),
+    .ss_hold  ( ss_cpu_hold ),
+    .ss_quiesced(ss_cpu_quiesced),
+    .ss_restore(ss_cpu_restore),
+    .ss_restore_done(ss_cpu_restore_done),
+    .ss_state (ss_cpu_state),
+    .ss_state_in(ss_cpu_state_in)
 );
+
+raizing_ss_sound_cpu #(
+    .CPU_CLOCK_ASYNC(0),
+    .SS_INDEX(15)
+) u_ss_cpu(
+    .ss_clk(CLK96),
+    .ss_reset(RESET96),
+    .cpu_clk(CLK96),
+    .cpu_reset(audio_cpu_reset),
+    .ss_freeze(SS_ENABLE && SS_ACTIVE && SS_FREEZE),
+    .ss_restore_begin(SS_ENABLE && SS_ACTIVE && SS_RESTORE_BEGIN),
+    .cpu_hold(ss_cpu_hold),
+    .cpu_quiesced(ss_cpu_quiesced),
+    .cpu_restore(ss_cpu_restore),
+    .cpu_restore_done(ss_cpu_restore_done),
+    .cpu_state(ss_cpu_state),
+    .cpu_state_in(ss_cpu_state_in),
+    .quiesced(),
+    .restore_done(),
+    .ss_data(SS_DATA),
+    .ss_addr(SS_ADDR),
+    .ss_select(ss_select_active),
+    .ss_write(SS_WRITE),
+    .ss_read(SS_READ),
+    .ss_query(SS_QUERY),
+    .ss_data_out(ss_response_data[0*64 +: 64]),
+    .ss_ack(ss_response_ack[0])
+);
+
+raizing_ss_wide_register #(
+    .WIDTH(128),
+    .SS_INDEX(17)
+) u_ss_control(
+    .clk(CLK96),
+    .reset(RESET96),
+    .capture_data(ss_control_capture),
+    .restore_data(ss_control_restore),
+    .restore_we(ss_control_restore_we),
+    .ss_data(SS_DATA),
+    .ss_addr(SS_ADDR),
+    .ss_select(ss_select_active),
+    .ss_write(SS_WRITE),
+    .ss_read(SS_READ),
+    .ss_query(SS_QUERY),
+    .ss_data_out(ss_response_data[1*64 +: 64]),
+    .ss_ack(ss_response_ack[1])
+);
+
+raizing_ss_response_mux #(.COUNT(2)) u_ss_response(
+    .ack(ss_response_ack),
+    .data(ss_response_data),
+    .ack_out(SS_ACK),
+    .data_out(SS_DATA_OUT)
+);
+
+assign SS_QUIESCED = !SS_ENABLE || !SS_ACTIVE || ss_cpu_quiesced;
 
 // jtframe_z80_romwait #(.M1_WAIT(1)) u_cpu(
 //     .rst_n      ( ~RESET96      ),

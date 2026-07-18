@@ -219,6 +219,26 @@ u_game(
     .snd_vol     ( snd_vol        ),
     .snd_vu      ( snd_vu         ),
     .snd_peak    ( snd_peak       ),
+
+`ifdef RAIZING_SAVESTATE
+    .ss_do_save       ( ss_ui_save_request     ),
+    .ss_do_restore    ( ss_ui_load_request     ),
+    .ss_stream_busy   ( ss_stream_busy         ),
+    .ss_format_valid  ( ss_state_valid         ),
+    .ss_stream_save   ( ss_stream_save         ),
+    .ss_stream_load   ( ss_stream_load         ),
+    .ss_active        ( ss_active              ),
+    .ss_load_rejected ( ss_load_rejected       ),
+    .ss_game_id       ( ss_game_id             ),
+    .ss_data          ( ss_devices[1].data     ),
+    .ss_addr          ( ss_devices[1].addr     ),
+    .ss_select        ( ss_devices[1].select   ),
+    .ss_write         ( ss_devices[1].write    ),
+    .ss_read          ( ss_devices[1].read     ),
+    .ss_query         ( ss_devices[1].query    ),
+    .ss_data_out      ( ss_devices[1].data_out ),
+    .ss_ack           ( ss_devices[1].ack      ),
+`endif
     // Debug
 `ifdef JTFRAME_STATUS
     .st_addr     ( st_addr        ),

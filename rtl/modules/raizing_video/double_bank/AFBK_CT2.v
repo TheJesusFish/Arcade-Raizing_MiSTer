@@ -1,3 +1,6 @@
+// This file is a Codex-assisted refactoring and update
+// based on the original work of Pramod Somashekar (pram0d)
+
 /*
 * <-- pr4m0d -->
 * https://pram0d.com
@@ -23,12 +26,15 @@
 This chip does address and bank translation to the graphics roms for the GP9001 chip.
 It provides decoding functions for the graphics rom data.
 */
-module AFBK_CT2 (
+module AFBK_CT2 #(
+    parameter SS_ENABLE = 0
+)(
     input CLK,
     input CLK96,
     input GFX_CLK,
     input RESET,
     input RESET96,
+    input [7:0] GAME,
     input [2:0] OBJECTBANK_SLOT,
     input [15:0] OBJECTBANK_DIN,
     input OBJECTBANK_WR,
@@ -91,10 +97,16 @@ module AFBK_CT2 (
 	output reg     [21:0] GFX0SCR2_ADDR,
 	input          [31:0] GFX0SCR2_DOUT,
     output reg     [21:0] GFX1SCR2_ADDR,
-	input          [31:0] GFX1SCR2_DOUT
+    input          [31:0] GFX1SCR2_DOUT,
+
+    input                 SS_HOLD,
+    input                 SS_RESTORE,
+    input          [31:0] SS_OBJECT_BANKS_IN,
+    output         [31:0] SS_OBJECT_BANKS
 );
 
 integer i,m,npix;
+wire early_board = GAME <= 8'h02;
 function [31:0] decode_gfx;
 	input [7:0] a,b,c,d;
 	begin
@@ -118,71 +130,42 @@ endfunction
 
 //object bankswitch
 reg [3:0] object_bank [0:7];
+wire state_hold = SS_ENABLE && SS_HOLD;
+wire state_restore = SS_ENABLE && SS_RESTORE;
+assign SS_OBJECT_BANKS = {
+    object_bank[7], object_bank[6], object_bank[5], object_bank[4],
+    object_bank[3], object_bank[2], object_bank[1], object_bank[0]
+};
 
 //object bank write
 always @(posedge CLK96, posedge RESET96) begin
     if(RESET96) begin
-        `ifdef SIMULATION
-        //select screen
-        // object_bank[0] <= 'h9;
-        // object_bank[1] <= 'hF; 
-        // object_bank[2] <= 2;
-        // object_bank[3] <= 3;
-        // object_bank[4] <= 4;
-        // object_bank[5] <= 5;
-        // object_bank[6] <= 6;
-        // object_bank[7] <= 7;
-        //intro1
-        // object_bank[0] <= 'h8;
-        // object_bank[1] <= 'h9; 
-        // object_bank[2] <= 'hA;
-        // object_bank[3] <= 'hB;
-        // object_bank[4] <= 'hC;
-        // object_bank[5] <= 5;
-        // object_bank[6] <= 6;
-        // object_bank[7] <= 7;
-        object_bank[0] <= 'he;
-        object_bank[1] <= 'h1; 
-        object_bank[2] <= 'h2;
-        object_bank[3] <= 'h3;
-        object_bank[4] <= 'h4;
-        object_bank[5] <= 5;
-        object_bank[6] <= 6;
-        object_bank[7] <= 7;
-        //bazzcok intro
-        // object_bank[0] <= 'h9;
-        // object_bank[1] <= 'h0; 
-        // object_bank[2] <= 'h2;
-        // object_bank[3] <= 'h3;
-        // object_bank[4] <= 'h4;
-        // object_bank[5] <= 5;
-        // object_bank[6] <= 6;
-        // object_bank[7] <= 7;
-        //gameplay1
-        // object_bank[0] <= 'h8;
-        // object_bank[1] <= 'h1; 
-        // object_bank[2] <= 'h2;
-        // object_bank[3] <= 'h3;
-        // object_bank[4] <= 'h4;
-        // object_bank[5] <= 5;
-        // object_bank[6] <= 6;
-        // object_bank[7] <= 7;
-        `else
         object_bank[0] <= 4'h0;
-        object_bank[1] <= 4'h0;
-        object_bank[2] <= 4'h0;
-        object_bank[3] <= 4'h0;
-        object_bank[4] <= 4'h0;
-        object_bank[5] <= 4'h0;
-        object_bank[6] <= 4'h0;
-        object_bank[7] <= 4'h0;
-        `endif
-    end else begin
-        if(OBJECTBANK_WR) object_bank[OBJECTBANK_SLOT] <= OBJECTBANK_DIN & 4'hF;
+        object_bank[1] <= early_board ? 4'h1 : 4'h0;
+        object_bank[2] <= early_board ? 4'h2 : 4'h0;
+        object_bank[3] <= early_board ? 4'h3 : 4'h0;
+        object_bank[4] <= early_board ? 4'h4 : 4'h0;
+        object_bank[5] <= early_board ? 4'h5 : 4'h0;
+        object_bank[6] <= early_board ? 4'h6 : 4'h0;
+        object_bank[7] <= early_board ? 4'h7 : 4'h0;
+    end else if(state_restore) begin
+        object_bank[0] <= SS_OBJECT_BANKS_IN[3:0];
+        object_bank[1] <= SS_OBJECT_BANKS_IN[7:4];
+        object_bank[2] <= SS_OBJECT_BANKS_IN[11:8];
+        object_bank[3] <= SS_OBJECT_BANKS_IN[15:12];
+        object_bank[4] <= SS_OBJECT_BANKS_IN[19:16];
+        object_bank[5] <= SS_OBJECT_BANKS_IN[23:20];
+        object_bank[6] <= SS_OBJECT_BANKS_IN[27:24];
+        object_bank[7] <= SS_OBJECT_BANKS_IN[31:28];
+    end else if(!state_hold) begin
+        if(!early_board && OBJECTBANK_WR)
+            object_bank[OBJECTBANK_SLOT] <= OBJECTBANK_DIN[3:0];
     end
 end
 
-wire [23:0] gfx_addr = {object_bank[TILE_BANK], {TILE_NUMBER,5'b0}+TILE_NUMBER_OFFS};
+wire [23:0] gfx_addr = early_board ?
+                       (((object_bank[TILE_BANK] << 15) + TILE_NUMBER) << 5) + TILE_NUMBER_OFFS :
+                       {object_bank[TILE_BANK], {TILE_NUMBER, 5'b0} + TILE_NUMBER_OFFS};
 wire gfx_half = gfx_addr[23];
 
 //gfx read/decode cycle
@@ -193,7 +176,7 @@ always @(posedge CLK96, posedge RESET96) begin
         GFX_DATA_OK<=1'b0;
         st<=0;
     end 
-    else if(GFX_DATA_CS) begin
+    else if(!state_hold && GFX_DATA_CS) begin
         st<=st+1;
         case(st)
             0: begin
@@ -246,7 +229,7 @@ always @(posedge CLK96, posedge RESET96) begin
         SCR0_GFX_DATA_OK<=1'b0;
         scr0_st<=0;
     end 
-    else if(SCR0_GFX_DATA_CS) begin
+    else if(!state_hold && SCR0_GFX_DATA_CS) begin
         scr0_st<=scr0_st+1;
         case(scr0_st)
             0: begin
@@ -290,7 +273,7 @@ always @(posedge CLK96, posedge RESET96) begin
         SCR1_GFX_DATA_OK<=1'b0;
         scr1_st<=0;
     end 
-    else if(SCR1_GFX_DATA_CS) begin
+    else if(!state_hold && SCR1_GFX_DATA_CS) begin
         scr1_st<=scr1_st+1;
         case(scr1_st)
             0: begin
@@ -334,7 +317,7 @@ always @(posedge CLK96, posedge RESET96) begin
         SCR2_GFX_DATA_OK<=1'b0;
         scr2_st<=0;
     end 
-    else if(SCR2_GFX_DATA_CS) begin
+    else if(!state_hold && SCR2_GFX_DATA_CS) begin
         scr2_st<=scr2_st+1;
         case(scr2_st)
             0: begin

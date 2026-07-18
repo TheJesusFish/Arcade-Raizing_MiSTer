@@ -33,7 +33,11 @@ module NMK112 (
     input  [2:0] OFFSET,
     input  [7:0] DATA,
     input  [17:0] REQ_ADDR,
-    output [20:0] REQ_DATA_ADDR
+    output [20:0] REQ_DATA_ADDR,
+    input SS_HOLD,
+    input SS_RESTORE,
+    input [31:0] SS_STATE_IN,
+    output [31:0] SS_STATE
 );
 
 parameter TABLESIZE = 'h100;
@@ -43,6 +47,11 @@ parameter ROM_OFFS = 'h0;
 parameter PAGE_MASK = 'hFF;
 
 reg [3:0] bank_addrs [0:7];
+
+assign SS_STATE = {
+    bank_addrs[7], bank_addrs[6], bank_addrs[5], bank_addrs[4],
+    bank_addrs[3], bank_addrs[2], bank_addrs[1], bank_addrs[0]
+};
 
 //address map
 wire bank_a = REQ_ADDR >= 'h0 && REQ_ADDR <='hFF,
@@ -83,7 +92,16 @@ always @(posedge CLK, posedge RESET) begin
         bank_addrs[5] <= 4'h0;
         bank_addrs[6] <= 4'h0;
         bank_addrs[7] <= 4'h0;
-    end else if(WE) begin
+    end else if(SS_RESTORE) begin
+        bank_addrs[0] <= SS_STATE_IN[3:0];
+        bank_addrs[1] <= SS_STATE_IN[7:4];
+        bank_addrs[2] <= SS_STATE_IN[11:8];
+        bank_addrs[3] <= SS_STATE_IN[15:12];
+        bank_addrs[4] <= SS_STATE_IN[19:16];
+        bank_addrs[5] <= SS_STATE_IN[23:20];
+        bank_addrs[6] <= SS_STATE_IN[27:24];
+        bank_addrs[7] <= SS_STATE_IN[31:28];
+    end else if(!SS_HOLD && WE) begin
         bank_addrs[OFFSET[1:0]] <= DATA[3:0];
         bank_addrs[4 + OFFSET[1:0]] <= DATA[3:0];
         bank_addrs[OFFSET[1:0] + 2'd1] <= DATA[7:4];

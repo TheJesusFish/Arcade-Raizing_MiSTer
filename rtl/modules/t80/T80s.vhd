@@ -138,7 +138,10 @@ begin
 		MC => MCycle,
 		TS => TState,
 		OUT0 => OUT0,
-		IntCycle_n => IntCycle_n
+		IntCycle_n => IntCycle_n,
+		REG => open,
+		SS_REG => open,
+		SS_BOUNDARY => open
 	);
 
 	process (RESET_n, CLK)

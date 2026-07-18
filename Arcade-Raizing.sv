@@ -55,7 +55,7 @@ assign LED_POWER     = 2'b0;
 
 `include "build_id.v"
 localparam CONF_STR = {
-    "RAIZING;;",
+    "RAIZING;SS3E000000:400000;",
     "P1,Video Settings;",
     "H0P1OGH,Aspect Ratio,Original,Full Screen,[ARC1],[ARC2];",
     "H4P1o78,Rotate Screen,Yes,No (Original),No (Flip);",
@@ -73,7 +73,27 @@ localparam CONF_STR = {
     "O8,FX,On,Off;",
     "O9,FM,On,Off;",
     "-;",
+    "O[42:41],Savestate Slot,1,2,3,4;",
+    "O[43],Autoincrement Slot,Off,On;",
+    "R[44],Save state (Alt-F1);",
+    "R[45],Restore state (F1);",
+    "-;",
     "R0,Reset;",
+    "I,",
+    "Load=DPAD Up|Save=Down|Slot=L+R,",
+    "Active Slot 1,",
+    "Active Slot 2,",
+    "Active Slot 3,",
+    "Active Slot 4,",
+    "Save to state 1,",
+    "Restore state 1,",
+    "Save to state 2,",
+    "Restore state 2,",
+    "Save to state 3,",
+    "Restore state 3,",
+    "Save to state 4,",
+    "Restore state 4,",
+    "Incompatible save state;",
     "V,v",`BUILD_DATE
 };
 
@@ -214,6 +234,24 @@ wire [ 1:0] buttons;
 wire [15:0] status_menumask;
 wire [21:0] gamma_bus;
 wire        direct_video, force_scan2x, video_rotated;
+wire [10:0] ps2_key;
+wire        ss_ui_save_request;
+wire        ss_ui_load_request;
+wire        ss_stream_busy;
+wire        ss_stream_load_valid;
+wire        ss_stream_save;
+wire        ss_stream_load;
+wire        ss_active;
+wire        ss_load_rejected;
+wire        ss_info_request;
+wire  [7:0] ss_info_index;
+wire        ss_status_update;
+wire  [1:0] ss_selected_slot;
+wire  [1:0] ss_request_slot;
+wire  [7:0] ss_game_id;
+wire [127:0] ss_status_in = {
+    status[127:43], ss_selected_slot, status[40:0]
+};
 
 wire [ 1:0] dip_fxlevel;
 wire        dip_pause, dip_flip, dip_test;
@@ -386,6 +424,8 @@ hps_io #(
 
     .buttons         ( buttons         ),
     .status          ( status          ),
+    .status_in       ( ss_status_in    ),
+    .status_set      ( ss_status_update ),
     .status_menumask ( status_menumask ),
     .gamma_bus       ( gamma_bus       ),
     .direct_video    ( direct_video    ),
@@ -417,6 +457,7 @@ hps_io #(
     .joystick_r_analog_3( joyana_r4    ),
     .ps2_kbd_clk_out ( ps2_kbd_clk     ),
     .ps2_kbd_data_out( ps2_kbd_data    ),
+    .ps2_key         ( ps2_key         ),
 
     .paddle_0        ( raw_paddle_1    ),
     .paddle_1        ( raw_paddle_2    ),
@@ -429,10 +470,111 @@ hps_io #(
 
     .TIMESTAMP       ( timestamp_full  ),
     .ps2_mouse       ( ps2_mouse       ),
+    .info_req        ( ss_info_request ),
+    .info            ( ss_info_index   ),
     .EXT_BUS         (                 )
 );
 
+wire [31:0] ss_joystick =
+    joyusb_1_full | joyusb_2_full | joystick3_full | joystick4_full;
+
+raizing_ss_ui #(.INFO_TIMEOUT_BITS(25)) u_savestate_ui(
+    .clk(clk_rom),
+    .reset(rst),
+    .ps2_key(ps2_key),
+    .allow_ss(!game_rst && !dwnld_busy && !ss_active),
+    .busy(ss_active),
+    .load_rejected(ss_load_rejected),
+    .joy_ss(ss_joystick[13]),
+    .joy_right(ss_joystick[0]),
+    .joy_left(ss_joystick[1]),
+    .joy_down(ss_joystick[2]),
+    .joy_up(ss_joystick[3]),
+    .status_slot(status[42:41]),
+    .autoinc_slot(status[43]),
+    .osd_save_load(status[45:44]),
+    .save_request(ss_ui_save_request),
+    .load_request(ss_ui_load_request),
+    .info_request(ss_info_request),
+    .info_index(ss_info_index),
+    .status_update(ss_status_update),
+    .selected_slot(ss_selected_slot),
+    .request_slot(ss_request_slot)
+);
+
+raizing_ddr_if ddr_ss();
+raizing_ssbus_if ssbus();
+raizing_ssbus_if ss_devices[2]();
+wire ss_format_valid;
+wire ss_state_valid;
+
+raizing_ssbus_mux #(.COUNT(2)) u_ssbus_mux(
+    .clk(clk_rom),
+    .reset(rst),
+    .devices(ss_devices),
+    .stream(ssbus)
+);
+
+raizing_save_state_data #(
+    .CHUNK_COUNT(45),
+    .DDR_BASE(32'h3e00_0000),
+    .SLOT_SIZE(32'h0040_0000)
+) u_save_state_data(
+    .clk(clk_rom),
+    .reset(rst),
+    .ddr(ddr_ss),
+    .save_start(ss_stream_save),
+    .load_start(ss_stream_load),
+    .load_compatible(ss_format_valid),
+    .slot(ss_request_slot),
+    .busy(ss_stream_busy),
+    .load_valid(ss_stream_load_valid),
+    .ssbus(ssbus)
+);
+
+localparam [63:0] SS_MAGIC = 64'h525a_5353_3030_3031;
+localparam [63:0] SS_VERSION = 64'h0001_0000_0000_0000;
+
+reg [63:0] ss_restored_magic = 64'd0;
+reg [63:0] ss_restored_version = 64'd0;
+reg [7:0] ss_restored_game_id = 8'hff;
+assign ss_format_valid = ss_restored_magic == SS_MAGIC &&
+                         ss_restored_version == SS_VERSION &&
+                         ss_restored_game_id == ss_game_id;
+assign ss_state_valid = ss_format_valid && ss_stream_load_valid;
+
+always_ff @(posedge clk_rom) begin
+    ss_devices[0].setup(0, 3, 3);
+
+    if(rst || ss_stream_load) begin
+        ss_restored_magic <= 64'd0;
+        ss_restored_version <= 64'd0;
+        ss_restored_game_id <= 8'hff;
+    end
+
+    if(ss_devices[0].access(0)) begin
+        if(ss_devices[0].read) begin
+            case(ss_devices[0].addr[1:0])
+                2'd0: ss_devices[0].read_response(0, SS_MAGIC);
+                2'd1: ss_devices[0].read_response(0, SS_VERSION);
+                default: ss_devices[0].read_response(
+                    0, {56'd0, ss_game_id}
+                );
+            endcase
+        end else if(ss_devices[0].write) begin
+            case(ss_devices[0].addr[1:0])
+                2'd0: ss_restored_magic <= ss_devices[0].data;
+                2'd1: ss_restored_version <= ss_devices[0].data;
+                default: ss_restored_game_id <= ss_devices[0].data[7:0];
+            endcase
+            ss_devices[0].write_ack(0);
+        end
+    end
+end
+
+`define RAIZING_SAVESTATE
 `include "jtframe_game_instance.v"
+`undef RAIZING_SAVESTATE
 
 // Lower MiSTer/JTFrame integration. The root emu owns hps_io/CONF_STR.
 wire [63:0] frame_status = status[63:0];
@@ -469,7 +611,7 @@ wire [COLORW-1:0] hsize_r, hsize_g, hsize_b;
 // Screen rotation
 wire [ 7:0] rot_burstcnt;
 wire [28:0] rot_addr;
-wire [63:0] rot_dout;
+wire [63:0] rot_din;
 wire        rot_we, rot_rd, rot_busy;
 wire [ 7:0] rot_be;
 
@@ -1150,10 +1292,10 @@ wire rot_clk;
         .DDRAM_RD       ( rot_rd         ),
         // umuxed
         .DDRAM_CLK      ( rot_clk        ), // same as clk_rom
-        .DDRAM_DIN      ( DDRAM_DIN      )
+        .DDRAM_DIN      ( rot_din        )
     );
 `else
-    `ifndef JTFRAME_LF_BUFFER assign DDRAM_DIN=64'd0; `endif
+    assign rot_din = 64'd0;
     assign rot_clk = clk_rom;
 `endif
 
@@ -1197,6 +1339,14 @@ wire rot_clk;
         .st_dout    ( st_lpbuf      )
     );
 `else
+    wire        mr_ddr_clk;
+    wire [ 7:0] mr_ddr_burstcnt;
+    wire [28:0] mr_ddr_addr;
+    wire        mr_ddr_rd;
+    wire        mr_ddr_we;
+    wire [ 7:0] mr_ddr_be;
+    wire        mr_ddr_busy = ddr_ss.acquire ? 1'b1 : DDRAM_BUSY;
+
     jtframe_mr_ddrmux u_ddrmux(
         .rst            ( rst             ),
         .clk            ( clk_rom         ),
@@ -1215,14 +1365,27 @@ wire rot_clk;
         .rot_be         ( rot_be          ),
         .rot_busy       ( rot_busy        ),
         // DDR Signals
-        .ddr_clk        ( DDRAM_CLK       ),
-        .ddr_busy       ( DDRAM_BUSY      ),
-        .ddr_burstcnt   ( DDRAM_BURSTCNT  ),
-        .ddr_addr       ( DDRAM_ADDR      ),
-        .ddr_rd         ( DDRAM_RD        ),
-        .ddr_we         ( DDRAM_WE        ),
-        .ddr_be         ( DDRAM_BE        )
+        .ddr_clk        ( mr_ddr_clk      ),
+        .ddr_busy       ( mr_ddr_busy     ),
+        .ddr_burstcnt   ( mr_ddr_burstcnt ),
+        .ddr_addr       ( mr_ddr_addr     ),
+        .ddr_rd         ( mr_ddr_rd       ),
+        .ddr_we         ( mr_ddr_we       ),
+        .ddr_be         ( mr_ddr_be       )
     );
+
+    assign DDRAM_CLK = ddr_ss.acquire ? clk_rom : mr_ddr_clk;
+    assign DDRAM_BURSTCNT = ddr_ss.acquire ?
+                            ddr_ss.burstcnt : mr_ddr_burstcnt;
+    assign DDRAM_ADDR = ddr_ss.acquire ? ddr_ss.addr[31:3] : mr_ddr_addr;
+    assign DDRAM_RD = ddr_ss.acquire ? ddr_ss.read : mr_ddr_rd;
+    assign DDRAM_WE = ddr_ss.acquire ? ddr_ss.write : mr_ddr_we;
+    assign DDRAM_BE = ddr_ss.acquire ? ddr_ss.byteenable : mr_ddr_be;
+    assign DDRAM_DIN = ddr_ss.acquire ? ddr_ss.wdata : rot_din;
+
+    assign ddr_ss.rdata = DDRAM_DOUT;
+    assign ddr_ss.rdata_ready = DDRAM_DOUT_READY;
+    assign ddr_ss.busy = DDRAM_BUSY;
 `endif
 
 

@@ -114,7 +114,25 @@ module raizing_game(
 
     // extra clocks
     input                clk24,
-    input                rst24
+    input                rst24,
+
+    input                ss_do_save,
+    input                ss_do_restore,
+    input                ss_stream_busy,
+    input                ss_format_valid,
+    output               ss_stream_save,
+    output               ss_stream_load,
+    output               ss_active,
+    output               ss_load_rejected,
+    output        [7:0]  ss_game_id,
+    input         [63:0] ss_data,
+    input         [31:0] ss_addr,
+    input          [7:0] ss_select,
+    input                ss_write,
+    input                ss_read,
+    input                ss_query,
+    output        [63:0] ss_data_out,
+    output               ss_ack
 );
 
 localparam [7:0] RAIZING_GAREGGA  = 8'h00;
@@ -168,7 +186,133 @@ always @(posedge clk96) begin
         game_id <= core_ioctl_dout;
 end
 
-raizing_board u_board (
+wire ss_pause_request;
+wire ss_freeze;
+wire ss_paused;
+wire ss_game_quiesced;
+wire ss_cpu_idle;
+wire ss_save_begin;
+wire ss_save_resume;
+wire ss_restore_begin;
+wire ss_restore_window;
+wire ss_save_ready;
+wire ss_save_done;
+wire ss_restore_done;
+wire ss_do_save_96;
+wire ss_do_restore_96;
+wire ss_stream_busy_96;
+wire ss_format_valid_96;
+wire ss_stream_save_96;
+wire ss_stream_load_96;
+wire ss_active_96;
+wire ss_load_rejected_96;
+wire ss_sdram_idle = !(|ba_rd) && !ba_wr &&
+                     !(|ba_ack) && !(|ba_dst) &&
+                     !(|ba_dok) && !(|ba_rdy);
+
+assign ss_game_id = game_id;
+
+raizing_ss_pulse_cdc u_ss_save_request_cdc(
+    .src_clk(clk),
+    .src_reset(core_rst),
+    .src_pulse(ss_do_save),
+    .dst_clk(clk96),
+    .dst_reset(core_rst96),
+    .dst_pulse(ss_do_save_96)
+);
+
+raizing_ss_pulse_cdc u_ss_load_request_cdc(
+    .src_clk(clk),
+    .src_reset(core_rst),
+    .src_pulse(ss_do_restore),
+    .dst_clk(clk96),
+    .dst_reset(core_rst96),
+    .dst_pulse(ss_do_restore_96)
+);
+
+raizing_ss_level_cdc u_ss_stream_busy_cdc(
+    .dst_clk(clk96),
+    .dst_reset(core_rst96),
+    .src_level(ss_stream_busy),
+    .dst_level(ss_stream_busy_96)
+);
+
+raizing_ss_level_cdc u_ss_format_valid_cdc(
+    .dst_clk(clk96),
+    .dst_reset(core_rst96),
+    .src_level(ss_format_valid),
+    .dst_level(ss_format_valid_96)
+);
+
+raizing_ss_pulse_cdc u_ss_stream_save_cdc(
+    .src_clk(clk96),
+    .src_reset(core_rst96),
+    .src_pulse(ss_stream_save_96),
+    .dst_clk(clk),
+    .dst_reset(core_rst),
+    .dst_pulse(ss_stream_save)
+);
+
+raizing_ss_pulse_cdc u_ss_stream_load_cdc(
+    .src_clk(clk96),
+    .src_reset(core_rst96),
+    .src_pulse(ss_stream_load_96),
+    .dst_clk(clk),
+    .dst_reset(core_rst),
+    .dst_pulse(ss_stream_load)
+);
+
+raizing_ss_level_cdc u_ss_active_cdc(
+    .dst_clk(clk),
+    .dst_reset(core_rst),
+    .src_level(ss_active_96),
+    .dst_level(ss_active)
+);
+
+raizing_ss_pulse_cdc u_ss_rejected_cdc(
+    .src_clk(clk96),
+    .src_reset(core_rst96),
+    .src_pulse(ss_load_rejected_96),
+    .dst_clk(clk),
+    .dst_reset(core_rst),
+    .dst_pulse(ss_load_rejected)
+);
+
+raizing_ss_pause #(.DRAIN_CYCLES(8)) u_ss_pause(
+    .clk(clk96),
+    .reset(core_rst96),
+    .request(ss_pause_request),
+    .vblank(!LVBL),
+    .memory_idle(ss_sdram_idle),
+    .cpu_idle(ss_cpu_idle),
+    .freeze(ss_freeze),
+    .paused(ss_paused)
+);
+
+raizing_ss_controller u_ss_controller(
+    .clk(clk96),
+    .reset(core_rst96),
+    .save_request(ss_do_save_96),
+    .load_request(ss_do_restore_96),
+    .pause_request(ss_pause_request),
+    .paused(ss_paused),
+    .game_quiesced(ss_game_quiesced),
+    .game_save_begin(ss_save_begin),
+    .game_save_resume(ss_save_resume),
+    .game_restore_begin(ss_restore_begin),
+    .restore_window(ss_restore_window),
+    .game_save_ready(ss_save_ready),
+    .game_save_done(ss_save_done),
+    .game_restore_done(ss_restore_done),
+    .stream_save_start(ss_stream_save_96),
+    .stream_load_start(ss_stream_load_96),
+    .stream_busy(ss_stream_busy_96),
+    .state_compatible(ss_format_valid_96),
+    .busy(ss_active_96),
+    .load_rejected(ss_load_rejected_96)
+);
+
+raizing_board #(.SS_ENABLE(1)) u_board (
     .GAME_ID(game_id),
     .TARGET_GAME_ID(target_game_id),
     .rst(core_rst),
@@ -256,7 +400,26 @@ raizing_board u_board (
     .snd_peak(snd_peak),
     .gfx_en(gfx_en),
     .clk24(clk24),
-    .rst24(core_rst24)
+    .rst24(core_rst24),
+    .SS_ACTIVE(ss_active_96),
+    .SS_FREEZE(ss_freeze),
+    .SS_SAVE_BEGIN(ss_save_begin),
+    .SS_SAVE_RESUME(ss_save_resume),
+    .SS_RESTORE_BEGIN(ss_restore_begin),
+    .SS_RESTORE_WINDOW(ss_restore_window),
+    .SS_SAVE_READY(ss_save_ready),
+    .SS_SAVE_DONE(ss_save_done),
+    .SS_RESTORE_DONE(ss_restore_done),
+    .SS_GAME_QUIESCED(ss_game_quiesced),
+    .SS_CPU_IDLE(ss_cpu_idle),
+    .SS_DATA(ss_data),
+    .SS_ADDR(ss_addr),
+    .SS_SELECT(ss_select),
+    .SS_WRITE(ss_write),
+    .SS_READ(ss_read),
+    .SS_QUERY(ss_query),
+    .SS_DATA_OUT(ss_data_out),
+    .SS_ACK(ss_ack)
 );
 
 endmodule

@@ -28,6 +28,7 @@
 /greybox_tmp/
 /incremental_db/
 /output_files/
+/releases/*.rbf
 /build_id.v
 /c5_pin_model_dump.txt
 /raizingpll.xml
@@ -40,7 +41,6 @@
 *.jdi
 *.pin
 *.sof
-*.rbf
 *.sld
 *.qws
 *.ddb
