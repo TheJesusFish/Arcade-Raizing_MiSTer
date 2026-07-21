@@ -144,6 +144,13 @@ wire [228:0] ss_cpu_state_in;
 wire [7:0] ss_wait_state;
 wire [1:0] ss_int_state, ss_m68wait_state;
 wire [31:0] ss_nmk_state;
+localparam [1:0] SS_ROM_IDLE  = 2'd0;
+localparam [1:0] SS_ROM_DRAIN = 2'd1;
+localparam [1:0] SS_ROM_ISSUE = 2'd2;
+localparam [1:0] SS_ROM_WAIT  = 2'd3;
+reg [1:0] ss_rom_prefetch_state;
+wire ss_rom_prefetch = ss_rom_prefetch_state != SS_ROM_IDLE;
+wire ss_rom_prefetch_accept = ss_rom_prefetch_state == SS_ROM_WAIT && ROMZ80_OK;
 wire [127:0] ss_control_restore;
 wire ss_control_restore_we;
 reg [127:0] ss_control_capture;
@@ -286,6 +293,7 @@ always @(posedge CLK96) begin
         fm_cs <= 0;
         ROMZ80_CS <= 0;
         ROMZ80_ADDR<=0;
+        ss_rom_prefetch_state <= SS_ROM_IDLE;
     end else if(ss_control_restore_we) begin
         ram_cs <= ss_control_restore[4];
         fm_cs <= ss_control_restore[5];
@@ -297,6 +305,31 @@ always @(posedge CLK96) begin
         okim6295_device_0_rd <= ss_control_restore[27];
         raizing_z80_bankswitch_w <= ss_control_restore[28];
         e01d_rd <= ss_control_restore[29];
+        ss_rom_prefetch_state <= SS_ROM_IDLE;
+    end else if(ss_cpu_restore) begin
+        ROMZ80_CS <= 1'b0;
+        ss_rom_prefetch_state <= SS_ROM_DRAIN;
+    end else if(ss_rom_prefetch_state == SS_ROM_DRAIN) begin
+        ROMZ80_CS <= 1'b0;
+        if(!ROMZ80_OK)
+            ss_rom_prefetch_state <= SS_ROM_ISSUE;
+    end else if(ss_rom_prefetch_state == SS_ROM_ISSUE) begin
+        ROMZ80_CS <= 1'b1;
+        ROMZ80_ADDR <= is_sorcer_kingdom ? {1'b0, A} :
+                       (A[15:14] == 2'b10 ?
+                        ({bank[2:0], 14'd0} + {3'b000, A[13:0]}) :
+                        {1'b0, A});
+        ss_rom_prefetch_state <= SS_ROM_WAIT;
+    end else if(ss_rom_prefetch_state == SS_ROM_WAIT) begin
+        ROMZ80_CS <= 1'b1;
+        ROMZ80_ADDR <= is_sorcer_kingdom ? {1'b0, A} :
+                       (A[15:14] == 2'b10 ?
+                        ({bank[2:0], 14'd0} + {3'b000, A[13:0]}) :
+                        {1'b0, A});
+        if(ROMZ80_OK) begin
+            ROMZ80_CS <= 1'b0;
+            ss_rom_prefetch_state <= SS_ROM_IDLE;
+        end
     end else if(!ss_sound_frozen) begin
 `ifdef SIMULATION
         if(debug)
@@ -341,6 +374,9 @@ always @(posedge CLK96) begin
         okim6295_device_0_wr_q <= ss_control_restore[55];
         nmk112_offset_0a <= ss_control_restore[58:56];
         nmk112_data_0a <= ss_control_restore[66:59];
+    end else if(ss_rom_prefetch) begin
+        if(ss_rom_prefetch_accept)
+            din <= ROMZ80_DOUT;
     end else if(!ss_sound_frozen) begin
         okim6295_device_0_wr_q <= okim6295_device_0_wr_dec;
         nmk112_we_q <= raizing_oki_bankswitch_w_dec;
@@ -425,7 +461,6 @@ wire z80int_n = GAME == GAREGGA ? int_n : ym_irq_n;
 
 wire busak_n;
 wire wait_n = 1'b1;
-
 raizing_z80wait #(
     .DEVCNT(1),
     .SS_ENABLE(SS_ENABLE)
@@ -530,7 +565,8 @@ raizing_ss_response_mux #(.COUNT(2)) u_ss_response(
     .data_out(SS_DATA_OUT)
 );
 
-assign SS_QUIESCED = !SS_ENABLE || !SS_ACTIVE || ss_cpu_quiesced;
+assign SS_QUIESCED = !SS_ENABLE || !SS_ACTIVE ||
+                     (ss_cpu_quiesced && !ss_rom_prefetch);
 
 // jtframe_z80_romwait #(.M1_WAIT(1)) u_cpu(
 //     .rst_n      ( ~RESET96      ),

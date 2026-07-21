@@ -275,7 +275,9 @@ begin
 			 else IntE_FF2 & IntE_FF1 & IStatus & DOR(127 downto 112) & DOR(47 downto 0) & DOR(63 downto 48) & DOR(111 downto 64) &
 						std_logic_vector(PC) & std_logic_vector(SP) & std_logic_vector(R) & I & Fp & Ap & F & ACC;
 	SS_REG <= Halt_FF & WZ;
-	SS_BOUNDARY <= '1' when MCycle = "001" and TState = 2 else '0';
+	SS_BOUNDARY <= '1' when MCycle = "001" and TState = 2 and
+		ISet = "00" and XY_State = "00" and Prefix = "00" and
+		IntCycle = '0' and NMICycle = '0' else '0';
 
 	mcode : T80_MCode
 		generic map(
@@ -449,6 +451,7 @@ begin
 				A <= DIR(79 downto 64);
 				IStatus <= DIR(209 downto 208);
 				WZ <= SS_DIR(15 downto 0);
+				Alternate <= '0';
 
 			elsif ClkEn = '1' then
 				ALU_Op_r <= "0000";

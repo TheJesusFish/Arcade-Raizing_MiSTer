@@ -30,7 +30,8 @@
         <dip name="No Death/Stop Mode" bits="14" ids="Off,On"/>
         <dip name="Continue Play" bits="15" ids="On,Off"/>
         <!-- JMPR -->
-        <dip name="Region" bits="16,19" ids="JPN,USA,EU,SEA,CHN,KOR,HK,TWN" values="0,2,4,6,8,10,12,14"/>
+        <dip name="FBI Logo" bits="16" ids="On,Off"/>
+        <dip name="Region" bits="17,19" ids="JPN,USA,EU,SEA,CHN,KOR,HK,TWN"/>
     </switches>
 
     <rom index="0" zip="sstriker.zip" md5="None" address="0x30000000">

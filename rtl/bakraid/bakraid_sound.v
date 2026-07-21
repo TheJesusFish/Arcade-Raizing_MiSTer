@@ -109,6 +109,14 @@ wire [7:0] ss_wait_state_in;
 wire ss_sound_frozen = SS_ENABLE && SS_ACTIVE && ss_cpu_quiesced;
 wire [7:0] ss_select_active = SS_ENABLE && SS_ACTIVE ? SS_SELECT : 8'hff;
 wire [1:0] ss_nmi_state, ss_wait_ff_state;
+localparam [1:0] SS_ROM_IDLE  = 2'd0;
+localparam [1:0] SS_ROM_DRAIN = 2'd1;
+localparam [1:0] SS_ROM_ISSUE = 2'd2;
+localparam [1:0] SS_ROM_WAIT  = 2'd3;
+reg [1:0] ss_rom_prefetch_state;
+wire ss_rom_prefetch = ss_rom_prefetch_state != SS_ROM_IDLE;
+wire ss_rom_prefetch_accept = ss_rom_prefetch_state == SS_ROM_WAIT && ROMZ80_OK;
+wire ss_rom_prefetch_sync;
 wire [191:0] ss_control_restore;
 wire ss_control_restore_we;
 reg [191:0] ss_control_capture;
@@ -236,6 +244,7 @@ always @(posedge CLK, posedge RESET) begin
         ymz_cpu_rd <= 0;
         ymz_cpu_addr <= 0;
         ymz_cpu_din <= 0;
+        ss_rom_prefetch_state <= SS_ROM_IDLE;
     end else if(ss_control_restore_we) begin
         ROMZ80_CS <= ss_control_restore[16];
         ram_cs <= ss_control_restore[17];
@@ -252,6 +261,23 @@ always @(posedge CLK, posedge RESET) begin
         batrider_clear_nmi_w <= ss_control_restore[35];
         soundlatch_rd <= ss_control_restore[36];
         soundlatch2_rd <= ss_control_restore[37];
+        ss_rom_prefetch_state <= SS_ROM_IDLE;
+    end else if(ss_cpu_restore) begin
+        ROMZ80_CS <= 1'b0;
+        ss_rom_prefetch_state <= SS_ROM_DRAIN;
+    end else if(ss_rom_prefetch_state == SS_ROM_DRAIN) begin
+        ROMZ80_CS <= 1'b0;
+        if(!ROMZ80_OK)
+            ss_rom_prefetch_state <= SS_ROM_ISSUE;
+    end else if(ss_rom_prefetch_state == SS_ROM_ISSUE) begin
+        ROMZ80_CS <= 1'b1;
+        ss_rom_prefetch_state <= SS_ROM_WAIT;
+    end else if(ss_rom_prefetch_state == SS_ROM_WAIT) begin
+        ROMZ80_CS <= 1'b1;
+        if(ROMZ80_OK) begin
+            ROMZ80_CS <= 1'b0;
+            ss_rom_prefetch_state <= SS_ROM_IDLE;
+        end
     end else if(!ss_sound_frozen) begin
         ymz_addr_wr_d <= ymz_addr_wr_raw;
         ymz_data_wr_d <= ymz_data_wr_raw;
@@ -298,6 +324,9 @@ always @(posedge CLK, posedge RESET) begin
         SOUNDLATCH3 <= ss_control_restore[53:46];
         SOUNDLATCH4 <= ss_control_restore[61:54];
         SOUNDLATCH_ACK <= ss_control_restore[63:62];
+    end else if(ss_rom_prefetch) begin
+        if(ss_rom_prefetch_accept)
+            din <= ROMZ80_DOUT;
     end else if(!ss_sound_frozen) begin
         //to z80
         case(1'b1)
@@ -477,8 +506,16 @@ raizing_ss_response_mux #(.COUNT(4)) u_ss_response(
     .data_out(SS_DATA_OUT)
 );
 
+raizing_ss_level_cdc u_ss_prefetch_sync(
+    .dst_clk(CLK96),
+    .dst_reset(RESET96),
+    .src_level(ss_rom_prefetch),
+    .dst_level(ss_rom_prefetch_sync)
+);
+
 assign ss_wait_state_in = ss_control_restore[75:68];
-assign SS_QUIESCED = !SS_ENABLE || !SS_ACTIVE || ss_quiesced_sync;
+assign SS_QUIESCED = !SS_ENABLE || !SS_ACTIVE ||
+                     (ss_quiesced_sync && !ss_rom_prefetch_sync);
 
 //sdram bank switch rom 7/8 or 6
 wire [23:0] ymz_mem_addr;

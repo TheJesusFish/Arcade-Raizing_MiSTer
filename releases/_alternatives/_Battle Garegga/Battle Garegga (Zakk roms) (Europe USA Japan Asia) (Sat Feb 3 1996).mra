@@ -101,20 +101,20 @@
     </rom>
 		<nvram index="2" size="236"/>
     <switches page_id="1" page_name="Switches" base="8" default="00,00,00">
-        <!-- DSWA -->
+        <!-- DSW A -->
         <dip name="Test Mode" bits="0" ids="Off,On"/>
-        <dip name="Starting Coin" bits="1" ids="1,2"/>
-        <dip name="Coins" bits="2,4" ids="1/1,1/2,1/3,1/4,2/1,3/1,4/1,Free Play"/>
-        <dip name="Joystick Mode" bits="5" ids="90 degrees ACW,Normal"/>
-        <dip name="Effect" bits="6" ids="Off,On"/>
-        <dip name="Music" bits="7" ids="Off,On"/>
-        <!-- dip name="Coin 2" bits="5,7" ids="1/1,1/2,1/3,1/4,2/1,3/1,4/1"/ -->
-        <!-- DSWB -->
+        <dip name="Credits to Start" bits="1" ids="1,2"/>
+        <dip name="Coin A" bits="2,4" ids="1/1,1/2,1/3,1/4,2/1,3/1,4/1,Free Play"/>
+        <dip name="Coin B" bits="5,7" ids="1/1,1/2,1/3,1/4,2/1,3/1,4/1"/>
+        <dip name="Joystick Mode (Free Play)" bits="5" ids="90 degrees ACW,Normal"/>
+        <dip name="Effect (Free Play)" bits="6" ids="Off,On"/>
+        <dip name="Music (Free Play)" bits="7" ids="Off,On"/>
+        <!-- DSW B -->
         <dip name="Start Rank" bits="8,9" ids="Normal,Easy,Hard,Very Hard"/>
         <dip name="Screen Flip" bits="10" ids="Off,On"/>
         <dip name="Demo Sound" bits="11" ids="On,Off"/>
         <dip name="Player Counts" bits="12,14" ids="3,4,2,1,5,6,Infinite,Invulnerability"/>
-        <dip name="Extra Player" bits="15" ids="None,Every 1000k,Every 2000k,1000k and 2000k"/>
+        <dip name="Bonus Life (JP / Export)" bits="15" ids="Every 1000k / None,1000k+2000k / Every 2000k"/>
         <!-- JMPR -->
         <dip name="Region" bits="16,17" ids="Japan,Europe (Tuning),USA (Fabtek),Asia"/>
         <dip name="Allow Continue" bits="18" ids="Yes,No"/>

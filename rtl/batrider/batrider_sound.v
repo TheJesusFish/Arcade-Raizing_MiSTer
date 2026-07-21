@@ -168,6 +168,13 @@ wire ss_sound_frozen = SS_ENABLE && SS_ACTIVE && ss_cpu_quiesced;
 wire [7:0] ss_select_active = SS_ENABLE && SS_ACTIVE ? SS_SELECT : 8'hff;
 wire [1:0] ss_nmi_state, ss_wait_ff_state;
 wire [31:0] ss_nmk0_state, ss_nmk1_state;
+localparam [1:0] SS_ROM_IDLE  = 2'd0;
+localparam [1:0] SS_ROM_DRAIN = 2'd1;
+localparam [1:0] SS_ROM_ISSUE = 2'd2;
+localparam [1:0] SS_ROM_WAIT  = 2'd3;
+reg [1:0] ss_rom_prefetch_state;
+wire ss_rom_prefetch = ss_rom_prefetch_state != SS_ROM_IDLE;
+wire ss_rom_prefetch_accept = ss_rom_prefetch_state == SS_ROM_WAIT && ROMZ80_OK;
 wire [191:0] ss_control_restore;
 wire ss_control_restore_we;
 reg [191:0] ss_control_capture;
@@ -371,6 +378,7 @@ always @(posedge CLK96) begin
         ROMZ80_CS <= 0;
         ROMZ80_ADDR<=0;
         SNDIRQ<=0;
+        ss_rom_prefetch_state <= SS_ROM_IDLE;
     end else if(ss_control_restore_we) begin
         bank <= ss_control_restore[3:0];
         ram_cs <= ss_control_restore[4];
@@ -387,6 +395,27 @@ always @(posedge CLK96) begin
         ymsnd_rd <= ss_control_restore[32];
         okim6295_device_0_rd <= ss_control_restore[33];
         okim6295_device_1_rd <= ss_control_restore[34];
+        ss_rom_prefetch_state <= SS_ROM_IDLE;
+    end else if(ss_cpu_restore) begin
+        ROMZ80_CS <= 1'b0;
+        ss_rom_prefetch_state <= SS_ROM_DRAIN;
+    end else if(ss_rom_prefetch_state == SS_ROM_DRAIN) begin
+        ROMZ80_CS <= 1'b0;
+        if(!ROMZ80_OK)
+            ss_rom_prefetch_state <= SS_ROM_ISSUE;
+    end else if(ss_rom_prefetch_state == SS_ROM_ISSUE) begin
+        ROMZ80_CS <= 1'b1;
+        ROMZ80_ADDR <= A[15:14] == 2'b10 ?
+                       {bank, A[13:0]} : {2'b00, A};
+        ss_rom_prefetch_state <= SS_ROM_WAIT;
+    end else if(ss_rom_prefetch_state == SS_ROM_WAIT) begin
+        ROMZ80_CS <= 1'b1;
+        ROMZ80_ADDR <= A[15:14] == 2'b10 ?
+                       {bank, A[13:0]} : {2'b00, A};
+        if(ROMZ80_OK) begin
+            ROMZ80_CS <= 1'b0;
+            ss_rom_prefetch_state <= SS_ROM_IDLE;
+        end
     end else if(!ss_sound_frozen) begin
             // if(debug) $display("address:%h, op:%b", A, {rd_n, wr_n, iorq_n, mreq_n, m1_n});
         soundlatch3_wr <= io_cs && !wr_n && A[7:0] == 8'h40;
@@ -442,6 +471,9 @@ always @(posedge CLK96) begin
         oki1_wr_l <= ss_control_restore[91];
         oki0_bank_wr_l <= ss_control_restore[92];
         oki1_bank_wr_l <= ss_control_restore[93];
+    end else if(ss_rom_prefetch) begin
+        if(ss_rom_prefetch_accept)
+            din <= ROMZ80_DOUT;
     end else if(!ss_sound_frozen) begin
         oki0_wr_l <= oki0_wr_dec;
         oki1_wr_l <= oki1_wr_dec;
@@ -680,7 +712,8 @@ raizing_ss_response_mux #(.COUNT(3)) u_ss_response(
 );
 
 assign ss_wait_state_in = ss_control_restore[169:162];
-assign SS_QUIESCED = !SS_ENABLE || !SS_ACTIVE || ss_cpu_quiesced;
+assign SS_QUIESCED = !SS_ENABLE || !SS_ACTIVE ||
+                     (ss_cpu_quiesced && !ss_rom_prefetch);
 
 assign PCM_CS = 1'b1;
 assign PCM1_CS = 1'b1;

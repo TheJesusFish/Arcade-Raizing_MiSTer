@@ -236,13 +236,7 @@ wire FLIP = GAME_ID == RAIZING_GAREGGA ? dipsw[10] :
             active_is_battle ? dipsw[16] : 1'b0;
 assign dip_flip = 1'b0;
 
-// Screen flip is handled by video; service mode is disabled.
-wire [23:0] DIPSW = GAME_ID == RAIZING_GAREGGA ?
-                    {dipsw[23:11], 1'b0, dipsw[9:1], 1'b0} :
-                    GAME_ID == RAIZING_SSTRIKER || GAME_ID == RAIZING_KINGDMGP ?
-                    {dipsw[23:3], 2'b00, dipsw[0]} :
-                    active_is_battle ? {dipsw[23:17], 1'b0, dipsw[15:1], 1'b0} :
-                    dipsw[23:0];
+wire [23:0] DIPSW = dipsw[23:0];
 wire DIP_TEST = dip_test;
 
 wire [7:0] DIPSW_C, DIPSW_B, DIPSW_A;
@@ -681,7 +675,7 @@ raizing_video #(.SS_ENABLE(SS_ENABLE)) u_video(
     .HS_END(active_is_garegga ? 9'd380 : 9'd0),
     .VS_START(active_is_garegga ? 9'd232 : 9'd0),
     .VS_END(active_is_garegga ? 9'd245 : 9'd0),
-    .FLIP(1'b0),
+    .FLIP(FLIP),
     .SS_FREEZE(SS_FREEZE),
     .SS_DATA(SS_DATA),
     .SS_ADDR(SS_ADDR),
@@ -1400,7 +1394,7 @@ always @(posedge CLK96) begin
             ss_main_restore_seen <= 1'b1;
 
         if((ss_main_restore_seen || ss_main_restore_done) &&
-           !ss_audio_replay_busy) begin
+           !ss_audio_replay_busy && ss_sound_quiesced) begin
             SS_RESTORE_DONE <= 1'b1;
             ss_main_restore_seen <= 1'b0;
         end

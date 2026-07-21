@@ -68,6 +68,7 @@ localparam CONF_STR = {
     "H2P1oHK,CRT scale factor,0,+1,+2,+3,+4,+5,+6,+7,-8,-7,-6,-5,-4,-3,-2,-1;",
     "P1-;",
     "P1oEF,Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
+    "DIP;",
     "-;",
     "O67,FX Volume, High, Very High, Very Low, Low;",
     "O8,FX,On,Off;",
@@ -769,7 +770,7 @@ jtframe_mister_dwnld #(
     .hps_index      ( hps_index[7:0] ),
     .hps_wr         ( hps_wr         ),
     .hps_addr       ( hps_addr       ),
-    .hps_dout       ( hps_dout      ),
+    .hps_dout       ( hps_dout       ),
     .hps_wait       ( hps_wait       ),
 
     .ioctl_wr       ( ioctl_wr       ),

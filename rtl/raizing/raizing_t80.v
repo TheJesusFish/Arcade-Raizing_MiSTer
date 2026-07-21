@@ -49,8 +49,8 @@ module raizing_z80wait #(
             miss_cnt <= 4'd0;
             cen_l <= 1'b0;
         end else if(state_restore) begin
-            cen_l <= ss_state_in[4];
-            miss_cnt <= ss_state_in[3:0];
+            cen_l <= 1'b0;
+            miss_cnt <= 4'd0;
         end else if(!state_hold) begin
             cen_l <= cen_out;
 
@@ -71,9 +71,9 @@ module raizing_z80wait #(
             locked <= 1'b0;
             started <= 1'b0;
         end else if(state_restore) begin
-            last_rom_cs <= ss_state_in[7];
-            locked <= ss_state_in[6];
-            started <= ss_state_in[5];
+            last_rom_cs <= 1'b0;
+            locked <= 1'b0;
+            started <= 1'b1;
         end else if(!state_hold) begin
             last_rom_cs <= rom_cs;
             if(rom_bad) begin
@@ -123,8 +123,9 @@ module raizing_t80 #(
     wire [16:0] state_ext;
     wire state_boundary;
 
-    assign cpu_cen = cen && !(SS_ENABLE && ss_hold && state_boundary);
-    assign ss_quiesced = SS_ENABLE && ss_hold && state_boundary;
+    wire ss_boundary_ready = state_boundary && wait_n;
+    assign cpu_cen = cen && !(SS_ENABLE && ss_hold && ss_boundary_ready);
+    assign ss_quiesced = SS_ENABLE && ss_hold && ss_boundary_ready;
     assign ss_state = SS_ENABLE ? {state_ext, state_reg} : 229'd0;
 
     always @(posedge clk) begin
