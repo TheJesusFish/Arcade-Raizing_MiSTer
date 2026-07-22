@@ -211,23 +211,18 @@ wire debug = 1'b1;
 integer fd;
 initial fd = $fopen("logsound.txt", "w");
 `endif
-/*
-JTFrame maps the OSD FX level as:
-0: Very Low, 1: Low, 2: High/default, 3: Very High.
-Sorcer Striker/Kingdom Grandprix use the louder standalone mix; Garegga
-retains its smaller OKI boost.
-*/
-wire [7:0] fx_mult_sorcer_kingdom = FX_LEVEL == 2 ? 8'h24 :
-                                     FX_LEVEL == 3 ? 8'h30 :
-                                     FX_LEVEL == 1 ? 8'h18 :
-                                     FX_LEVEL == 0 ? 8'h0c :
-                                     8'h24;
-wire [7:0] fx_mult_garegga = FX_LEVEL == 2 ? 8'h12 :
-                              FX_LEVEL == 3 ? 8'h23 :
-                              FX_LEVEL == 1 ? 8'h0d :
-                              FX_LEVEL == 0 ? 8'h09 :
-                              8'h12;
-wire [7:0] fmgain = GAME == GAREGGA ? 8'h08 : 8'h0c;
+// FX_LEVEL: 0 Very Low, 1 Low, 2 High/default, 3 Very High.
+wire [7:0] fx_mult_sorcer_kingdom = FX_LEVEL == 2 ? 8'h20 :
+                                     FX_LEVEL == 3 ? 8'h2b :
+                                     FX_LEVEL == 1 ? 8'h15 :
+                                     FX_LEVEL == 0 ? 8'h0b :
+                                     8'h20;
+wire [7:0] fx_mult_garegga = FX_LEVEL == 2 ? 8'h28 :
+                              FX_LEVEL == 3 ? 8'h4e :
+                              FX_LEVEL == 1 ? 8'h1d :
+                              FX_LEVEL == 0 ? 8'h14 :
+                              8'h28;
+wire [7:0] fmgain = GAME == GAREGGA ? 8'h0a : 8'h0c;
 
 assign fm0_mono_sum = {fm0_left[15], fm0_left} + {fm0_right[15], fm0_right};
 assign fm1_mono_sum = {fm1_left[15], fm1_left} + {fm1_right[15], fm1_right};
@@ -600,7 +595,7 @@ assign PCM_CS = 1'b1;
 //for garegga
 generate
 if(!EXTERNAL_CHIPS) begin : gen_internal_chips
-jt6295 #(.INTERPOL(2)) u_adpcm_0(
+jt6295 #(.INTERPOL(1)) u_adpcm_0(
     .rst        ( RESET96       ),
     .clk        ( CLK96       ),
     .cen        ( OKI_CEN & DIP_PAUSE ),
@@ -663,7 +658,7 @@ jt51 u_jt51_1(
     .xright     ( fm1_right  )
 );
 
-jt6295 #(.INTERPOL(2)) u_adpcm_1(
+jt6295 #(.INTERPOL(1)) u_adpcm_1(
     .rst        ( RESET96       ),
     .clk        ( CLK96       ),
     .cen        ( OKI_CEN_1 & DIP_PAUSE ),

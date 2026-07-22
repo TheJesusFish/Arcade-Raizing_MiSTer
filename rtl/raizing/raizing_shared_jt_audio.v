@@ -119,7 +119,7 @@ generate
             .auto_ss_ack(oki1_ss_ack)
         );
 
-        ss_jt6295 #(.INTERPOL(2)) u_adpcm_0(
+        ss_jt6295 #(.INTERPOL(1)) u_adpcm_0(
             .rst(chip_reset), .filter_rst(SS_RESTORE_BEGIN),
             .clk(CLK96), .cen(OKI0_CEN & ACTIVE), .ss(OKI0_SS),
             .wrn(OKI0_WR_N), .din(OKI0_DIN), .dout(OKI0_DOUT),
@@ -133,7 +133,7 @@ generate
             .auto_ss_data_out(oki0_ss_data_out), .auto_ss_ack(oki0_ss_ack)
         );
 
-        ss_jt6295 #(.INTERPOL(2)) u_adpcm_1(
+        ss_jt6295 #(.INTERPOL(1)) u_adpcm_1(
             .rst(chip_reset), .filter_rst(SS_RESTORE_BEGIN),
             .clk(CLK96), .cen(OKI1_CEN & ACTIVE), .ss(OKI1_SS),
             .wrn(OKI1_WR_N), .din(OKI1_DIN), .dout(OKI1_DOUT),
@@ -169,7 +169,7 @@ generate
             .ack_out(SS_ACK), .data_out(SS_DATA_OUT)
         );
     end else begin : gen_no_savestate
-        jt6295 #(.INTERPOL(2)) u_adpcm_0(
+        jt6295 #(.INTERPOL(1)) u_adpcm_0(
             .rst(chip_reset), .clk(CLK96), .cen(OKI0_CEN & ACTIVE),
             .ss(OKI0_SS), .wrn(OKI0_WR_N), .din(OKI0_DIN),
             .dout(OKI0_DOUT), .rom_addr(OKI0_ROM_ADDR),
@@ -177,7 +177,7 @@ generate
             .sound(OKI0_SOUND), .sample(OKI0_SAMPLE)
         );
 
-        jt6295 #(.INTERPOL(2)) u_adpcm_1(
+        jt6295 #(.INTERPOL(1)) u_adpcm_1(
             .rst(chip_reset), .clk(CLK96), .cen(OKI1_CEN & ACTIVE),
             .ss(OKI1_SS), .wrn(OKI1_WR_N), .din(OKI1_DIN),
             .dout(OKI1_DOUT), .rom_addr(OKI1_ROM_ADDR),

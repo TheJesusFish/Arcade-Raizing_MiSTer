@@ -275,7 +275,7 @@ wire [7:0] fx_mult = FX_LEVEL == 2 ? 8'h10 :
                      FX_LEVEL == 1 ? 8'h0c :
                      8'h10;
 
-localparam [7:0] FM_MIX_GAIN = 8'h07;
+localparam [7:0] FM_MIX_GAIN = 8'h0b;
 always @(posedge CLK96) begin
     if(!ss_sound_frozen)
         peak <= peak_l | peak_r | peak_oki;
@@ -288,7 +288,7 @@ reg signed [15:0] final_oki;
 wire [7:0] fm_gain   = SND_EN[0] ? FM_MIX_GAIN : 8'd0;
 wire [7:0] oki0_gain = SND_EN[1] ? gain1  : 8'd0;
 wire [7:0] oki1_gain = SND_EN[2] ? gain1  : 8'd0;
-wire [7:0] oki_gain  = (SND_EN[1] | SND_EN[2]) ? 8'h12 : 8'd0;
+wire [7:0] oki_gain  = (SND_EN[1] | SND_EN[2]) ? 8'h1d : 8'd0;
 
 always @(posedge CLK96) begin
     if(!ss_sound_frozen) begin
@@ -720,7 +720,7 @@ assign PCM1_CS = 1'b1;
 
 generate
 if(!EXTERNAL_CHIPS) begin : gen_internal_chips
-jt6295 #(.INTERPOL(2)) u_adpcm_0(
+jt6295 #(.INTERPOL(1)) u_adpcm_0(
     .rst        ( RESET96       ),
     .clk        ( CLK96       ),
     .cen        ( OKI_CEN & DIP_PAUSE   ),
@@ -738,7 +738,7 @@ jt6295 #(.INTERPOL(2)) u_adpcm_0(
     .sample     ( oki0_sample)   // ~26kHz
 );
 
-jt6295 #(.INTERPOL(2)) u_adpcm_1(
+jt6295 #(.INTERPOL(1)) u_adpcm_1(
     .rst        ( RESET96       ),
     .clk        ( CLK96       ),
     .cen        ( OKI_CEN & DIP_PAUSE   ),
